@@ -2,6 +2,7 @@ asgiref==3.9.1
 certifi==2025.8.3
 charset-normalizer==3.4.3
 colorama==0.4.6
+dj-database-url==3.0.1
 Django==5.2.5
 django-anymail==13.1
 django-cors-headers==4.9.0
