@@ -9,8 +9,10 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
-
+import os
 from pathlib import Path
+import dj_database_url
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,7 +28,7 @@ SECRET_KEY = 'django-insecure-l$!1oa0q%a!3%^prsqm*xbc0h*w&5td!ntp16oy_s&ptre!25$
 DEBUG = True
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["monieplug.onrender.com"]
 
 
 # Application definition
@@ -87,6 +89,10 @@ DATABASES = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
+}
+
+DATABASES = {
+    'default': dj_database_url.config(default='postgresql://monieplug_user:STgk1jHEmclRvoZUfC72JvxtPbwcdtY1@dpg-d3ejil3ipnbc73bvsc6g-a.oregon-postgres.render.com/monieplug')
 }
 
 
