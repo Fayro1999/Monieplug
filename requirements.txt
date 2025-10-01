@@ -20,6 +20,7 @@ platformdirs==4.2.0
 psycopg2-binary==2.9.10
 PyJWT==2.8.0
 PyMySQL==1.1.1
+qrcode==7.4.2
 requests==2.32.3
 sqlparse==0.5.0
 typing_extensions==4.13.2
@@ -27,3 +28,5 @@ tzdata==2024.1
 urllib3==2.3.0
 virtualenv==20.25.1
 Whoosh==2.7.4
+
+
