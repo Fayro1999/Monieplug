@@ -28,7 +28,8 @@ SECRET_KEY = 'django-insecure-l$!1oa0q%a!3%^prsqm*xbc0h*w&5td!ntp16oy_s&ptre!25$
 DEBUG = True
 
 
-ALLOWED_HOSTS = ["monieplug.onrender.com"]
+ALLOWED_HOSTS = ["monieplug.onrender.com", "127.0.0.1",
+    "localhost"]
 
 
 # Application definition
@@ -45,7 +46,13 @@ INSTALLED_APPS = [
     'authent',
     'rest_framework',
     "rest_framework.authtoken",
+    "drf_spectacular",
+    "scan2pay",
 ]
+
+ROVA_BAAS_TOKEN  = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICIzMnVJTUlnUEN4UHVfRmhqT29IZHdXaDVvanM5YXVxblRJak53RTlPaGlvIn0.eyJleHAiOjE3NjI4OTc1NDcsImlhdCI6MTc2Mjg2MTU0NywianRpIjoiZDE0YjY2MTEtZGE2NC00MTY1LTk4MzMtZWViZjRjNjlhN2M3IiwiaXNzIjoiaHR0cHM6Ly9iYWFzLWF1dGguZGV2LmdldHJvdmEuY28udWsva2V5Y2xvYWsvcmVhbG1zL3JvdmEiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiY2E0Y2I3ZjktOGU5NS00MzI4LTliZDYtNGRhM2IzNmYwYzcyIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiMDFKTUhBOTBWQ0pQRlBTNVhFQ01FUjFCV1ciLCJhY3IiOiIxIiwicmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iLCJkZWZhdWx0LXJvbGVzLXJvdmEiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6InByb2QgZW1haWwgYWRkcmVzcyBwcm9maWxlIiwiZW1haWxfdmVyaWZpZWQiOmZhbHNlLCJhZGRyZXNzIjp7fSwiY2xpZW50SG9zdCI6IjEwLjAuNS4zNyIsInByZWZlcnJlZF91c2VybmFtZSI6InNlcnZpY2UtYWNjb3VudC0wMWptaGE5MHZjanBmcHM1eGVjbWVyMWJ3dyIsImNsaWVudEFkZHJlc3MiOiIxMC4wLjUuMzciLCJjbGllbnRfaWQiOiIwMUpNSEE5MFZDSlBGUFM1WEVDTUVSMUJXVyJ9.Vl7--lrPRgyv74FBSAX2bKDZaXEEhdmcn0BDKS5361SZNNwXbLC85ArFMUapPI_pf8GrVt-KMUeJNWcK57_5Gpy0zlTgFJTK0O-ldyQtLP1-BpwZT2VaJ4AZ26xMK468nYwwT2Z8N1SZIsAASRHQNVQOh9jD9m-YY4A-gShRUtbv4Lrozrp1nqyz__5h89VsdOaUkDkVhmh7MW0FIFz6cYN0C99GU2Z_5N6xTOrJ3RUfL8YfixZbjy369etSuVmrMYdQom99htEVFRIhgNc9um46JSfnuiFklgfHso5objgr6GjHrwFCKlXzOScPZsEUbqdMnaYeRp2olW81ocycsw"
+
+
 
 AUTH_USER_MODEL = 'authent.User'
 
@@ -92,7 +99,11 @@ DATABASES = {
 }
 
 DATABASES = {
-    'default': dj_database_url.config(default='postgresql://monieplug_user:STgk1jHEmclRvoZUfC72JvxtPbwcdtY1@dpg-d3ejil3ipnbc73bvsc6g-a.oregon-postgres.render.com/monieplug')
+    'default': dj_database_url.config(
+        default='postgresql://monieplug_75y4_user:CK1HD4U9bY7JfrRe3Fa4XAi82E9Fgs0K@dpg-d469bu3uibrs73fkp4cg-a.oregon-postgres.render.com/monieplug_75y4',
+        conn_max_age=600,
+        ssl_require=True   # 👈 This line forces SSL
+    )
 }
 
 
@@ -154,10 +165,13 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
+        
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
-    ]
+    ],
+
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 

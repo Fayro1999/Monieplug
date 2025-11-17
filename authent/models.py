@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.db import models
 import uuid
 
+
 class UserManager(BaseUserManager):
     def create_user(self, email, phone, password=None, **extra_fields):
         if not email:
@@ -20,20 +21,23 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_superuser", True)
         return self.create_user(email, phone, password, **extra_fields)
 
+
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, unique=True)
-    is_active = models.BooleanField(default=False)  # becomes True after email verification
+
+    is_active = models.BooleanField(default=False)  # Becomes True after email verification
     is_staff = models.BooleanField(default=False)
 
-    # Fidelity virtual account info
+    # 🏦 Rova BaaS virtual account info
     virtual_account_number = models.CharField(max_length=20, blank=True, null=True)
-    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    virtual_account_name = models.CharField(max_length=100, blank=True, null=True)
+    bank_name = models.CharField(max_length=100, blank=True, null=True, default="Rova BaaS")
 
-    # Security
+    # 🔐 Security
     transaction_pin = models.CharField(max_length=128, blank=True, null=True)  # hashed pin
     email_verification_code = models.CharField(max_length=6, blank=True, null=True)
 
@@ -44,3 +48,4 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+

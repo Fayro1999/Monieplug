@@ -1,0 +1,1233 @@
+openapi: 3.0.3
+info:
+  title: ''
+  version: 0.0.0
+paths:
+  /api/authent/forgot-password/:
+    post:
+      operationId: api_authent_forgot_password_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ForgotPassword'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Forgot password result
+  /api/authent/get-balance/:
+    post:
+      operationId: api_authent_get_balance_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetAccountBalance'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/GetAccountBalance'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/GetAccountBalance'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Balance result
+  /api/authent/login/:
+    post:
+      operationId: api_authent_login_create
+      description: |-
+        post:
+        Authenticate a user with phone and password.
+
+        Request body:
+        {
+            "phone": "08123456789",
+            "password": "securepassword"
+        }
+
+        Response:
+        {
+            "token": "abc123xyz",
+            "user": {
+                "id": "1",
+                "email": "john@example.com",
+                "phone": "08123456789",
+                "virtual_account": "1234567890",
+                "bank": "Fidelity Bank"
+            }
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Login'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Login'
+        required: true
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Login success
+  /api/authent/reset-password/:
+    post:
+      operationId: api_authent_reset_password_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResetPassword'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          description: No response body
+  /api/authent/set-pin/:
+    post:
+      operationId: api_authent_set_pin_create
+      description: |-
+        post:
+        Set a 4-digit transaction PIN for the authenticated user.
+
+        Request body:
+        {
+            "pin": "1234"
+        }
+
+        Response:
+        {
+            "message": "Transaction PIN set successfully"
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetTransactionPin'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SetTransactionPin'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SetTransactionPin'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          description: No response body
+  /api/authent/signup/:
+    post:
+      operationId: api_authent_signup_create
+      description: |-
+        post:
+        Register a new user and open a Fidelity virtual account.
+
+        Steps:
+        1. Create a user with email & phone (inactive until verified).
+        2. Call Fidelity API to open a virtual account.
+        3. Send a verification code to user's email.
+
+        Request body:
+        {
+            "first_name": "John",
+            "last_name": "Doe",
+            "phone": "08123456789",
+            "email": "john@example.com",
+            "password": "securepassword",
+            "dob": "1990-01-01",
+            "gender": "M",
+            "address1": "123 Street",
+            "city": "Lagos",
+            "state": "Lagos",
+            "country": "Nigeria"
+        }
+
+        Response:
+        {
+            "message": "Account created. Please verify email.",
+            "verification_code": "123456",
+            "virtual_account_number": "1234567890",
+            "bank_name": "Fidelity Bank"
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Signup'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Signup'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Signup'
+        required: true
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Signup success
+  /api/authent/transfer-funds/:
+    post:
+      operationId: api_authent_transfer_funds_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferFunds'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransferFunds'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransferFunds'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Transfer result
+  /api/authent/verify-account/:
+    post:
+      operationId: api_authent_verify_account_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyAccount'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/VerifyAccount'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/VerifyAccount'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Account verification result
+  /api/authent/verify-email/:
+    post:
+      operationId: api_authent_verify_email_create
+      description: |-
+        post:
+        Verify a user’s email using a 6-digit code.
+
+        Request body:
+        {
+            "code": "123456"
+        }
+
+        Response:
+        {
+            "message": "Email verified successfully"
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmail'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/VerifyEmail'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/VerifyEmail'
+        required: true
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '201':
+          description: No response body
+  /api/authent/webhook/payment/:
+    post:
+      operationId: api_authent_webhook_payment_create
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: Webhook event processed
+  /api/event/events/:
+    get:
+      operationId: api_event_events_list
+      description: |-
+        get:
+        List all events.
+
+        Example Response:
+        [
+            {
+                "id": 1,
+                "title": "Summer Festival",
+                "description": "Biggest festival of the year",
+                "date": "2025-12-20T18:00:00Z",
+                "location": "Lagos",
+                "tickets": [...]
+            }
+        ]
+
+        post:
+        Create a new event with tickets (organizer only).
+
+        Example Request:
+        {
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "date": "2025-12-20T18:00:00Z",
+            "location": "Lagos",
+            "tickets": [
+                {"name": "VIP", "price": "5000.00"},
+                {"name": "Regular", "price": "2000.00"}
+            ]
+        }
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+          description: ''
+    post:
+      operationId: api_event_events_create
+      description: |-
+        get:
+        List all events.
+
+        Example Response:
+        [
+            {
+                "id": 1,
+                "title": "Summer Festival",
+                "description": "Biggest festival of the year",
+                "date": "2025-12-20T18:00:00Z",
+                "location": "Lagos",
+                "tickets": [...]
+            }
+        ]
+
+        post:
+        Create a new event with tickets (organizer only).
+
+        Example Request:
+        {
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "date": "2025-12-20T18:00:00Z",
+            "location": "Lagos",
+            "tickets": [
+                {"name": "VIP", "price": "5000.00"},
+                {"name": "Regular", "price": "2000.00"}
+            ]
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Event'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Event'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+          description: ''
+  /api/event/events/{id}/:
+    get:
+      operationId: api_event_events_retrieve
+      description: |-
+        get:
+        Retrieve a single event.
+
+        put/patch:
+        Update an event (only organizer).
+
+        delete:
+        Delete an event (only organizer).
+
+        Example GET Response:
+        {
+            "id": 1,
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "tickets": [...]
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+          description: ''
+    put:
+      operationId: api_event_events_update
+      description: |-
+        get:
+        Retrieve a single event.
+
+        put/patch:
+        Update an event (only organizer).
+
+        delete:
+        Delete an event (only organizer).
+
+        Example GET Response:
+        {
+            "id": 1,
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "tickets": [...]
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Event'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Event'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+          description: ''
+    patch:
+      operationId: api_event_events_partial_update
+      description: |-
+        get:
+        Retrieve a single event.
+
+        put/patch:
+        Update an event (only organizer).
+
+        delete:
+        Delete an event (only organizer).
+
+        Example GET Response:
+        {
+            "id": 1,
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "tickets": [...]
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEvent'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedEvent'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedEvent'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+          description: ''
+    delete:
+      operationId: api_event_events_destroy
+      description: |-
+        get:
+        Retrieve a single event.
+
+        put/patch:
+        Update an event (only organizer).
+
+        delete:
+        Delete an event (only organizer).
+
+        Example GET Response:
+        {
+            "id": 1,
+            "title": "Summer Festival",
+            "description": "Biggest festival of the year",
+            "tickets": [...]
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/event/tickets/:
+    get:
+      operationId: api_event_tickets_list
+      description: |-
+        get:
+        List tickets for a specific event.
+
+        Example: /api/tickets/?event=1
+
+        Response:
+        [
+            {"id": 1, "name": "VIP", "price": "5000.00"},
+            {"id": 2, "name": "Regular", "price": "2000.00"}
+        ]
+
+        post:
+        Create a ticket (only the event organizer can do this).
+
+        Example Request:
+        {
+            "event": 1,
+            "name": "Backstage Pass",
+            "price": "10000.00"
+        }
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Ticket'
+          description: ''
+    post:
+      operationId: api_event_tickets_create
+      description: |-
+        get:
+        List tickets for a specific event.
+
+        Example: /api/tickets/?event=1
+
+        Response:
+        [
+            {"id": 1, "name": "VIP", "price": "5000.00"},
+            {"id": 2, "name": "Regular", "price": "2000.00"}
+        ]
+
+        post:
+        Create a ticket (only the event organizer can do this).
+
+        Example Request:
+        {
+            "event": 1,
+            "name": "Backstage Pass",
+            "price": "10000.00"
+        }
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+          description: ''
+  /api/event/tickets/{id}/:
+    get:
+      operationId: api_event_tickets_retrieve
+      description: |-
+        get:
+        Retrieve ticket details.
+
+        put/patch:
+        Update ticket (organizer only).
+
+        delete:
+        Delete ticket (organizer only).
+
+        Example Response:
+        {
+            "id": 1,
+            "name": "VIP",
+            "price": "5000.00"
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+          description: ''
+    put:
+      operationId: api_event_tickets_update
+      description: |-
+        get:
+        Retrieve ticket details.
+
+        put/patch:
+        Update ticket (organizer only).
+
+        delete:
+        Delete ticket (organizer only).
+
+        Example Response:
+        {
+            "id": 1,
+            "name": "VIP",
+            "price": "5000.00"
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Ticket'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+          description: ''
+    patch:
+      operationId: api_event_tickets_partial_update
+      description: |-
+        get:
+        Retrieve ticket details.
+
+        put/patch:
+        Update ticket (organizer only).
+
+        delete:
+        Delete ticket (organizer only).
+
+        Example Response:
+        {
+            "id": 1,
+            "name": "VIP",
+            "price": "5000.00"
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTicket'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTicket'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTicket'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+          description: ''
+    delete:
+      operationId: api_event_tickets_destroy
+      description: |-
+        get:
+        Retrieve ticket details.
+
+        put/patch:
+        Update ticket (organizer only).
+
+        delete:
+        Delete ticket (organizer only).
+
+        Example Response:
+        {
+            "id": 1,
+            "name": "VIP",
+            "price": "5000.00"
+        }
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/schema/:
+    get:
+      operationId: api_schema_retrieve
+      description: |-
+        OpenApi3 schema for this API. Format can be selected via content negotiation.
+
+        - YAML: application/vnd.oai.openapi
+        - JSON: application/vnd.oai.openapi+json
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - yaml
+      - in: query
+        name: lang
+        schema:
+          type: string
+          enum:
+          - af
+          - ar
+          - ar-dz
+          - ast
+          - az
+          - be
+          - bg
+          - bn
+          - br
+          - bs
+          - ca
+          - ckb
+          - cs
+          - cy
+          - da
+          - de
+          - dsb
+          - el
+          - en
+          - en-au
+          - en-gb
+          - eo
+          - es
+          - es-ar
+          - es-co
+          - es-mx
+          - es-ni
+          - es-ve
+          - et
+          - eu
+          - fa
+          - fi
+          - fr
+          - fy
+          - ga
+          - gd
+          - gl
+          - he
+          - hi
+          - hr
+          - hsb
+          - hu
+          - hy
+          - ia
+          - id
+          - ig
+          - io
+          - is
+          - it
+          - ja
+          - ka
+          - kab
+          - kk
+          - km
+          - kn
+          - ko
+          - ky
+          - lb
+          - lt
+          - lv
+          - mk
+          - ml
+          - mn
+          - mr
+          - ms
+          - my
+          - nb
+          - ne
+          - nl
+          - nn
+          - os
+          - pa
+          - pl
+          - pt
+          - pt-br
+          - ro
+          - ru
+          - sk
+          - sl
+          - sq
+          - sr
+          - sr-latn
+          - sv
+          - sw
+          - ta
+          - te
+          - tg
+          - th
+          - tk
+          - tr
+          - tt
+          - udm
+          - ug
+          - uk
+          - ur
+          - uz
+          - vi
+          - zh-hans
+          - zh-hant
+      tags:
+      - api
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/vnd.oai.openapi:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/yaml:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/vnd.oai.openapi+json:
+              schema:
+                type: object
+                additionalProperties: {}
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+components:
+  schemas:
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        date:
+          type: string
+          format: date-time
+        location:
+          type: string
+          maxLength: 255
+        image:
+          type: string
+          format: uri
+          nullable: true
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+      required:
+      - date
+      - description
+      - id
+      - location
+      - tickets
+      - title
+    ForgotPassword:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+      required:
+      - email
+    GetAccountBalance:
+      type: object
+      properties:
+        account_number:
+          type: string
+        customer_ref:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+          format: email
+        mobile_no:
+          type: string
+      required:
+      - account_number
+      - customer_ref
+    Login:
+      type: object
+      properties:
+        phone:
+          type: string
+        password:
+          type: string
+          writeOnly: true
+      required:
+      - password
+      - phone
+    PatchedEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        title:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        date:
+          type: string
+          format: date-time
+        location:
+          type: string
+          maxLength: 255
+        image:
+          type: string
+          format: uri
+          nullable: true
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ticket'
+    PatchedTicket:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        ticket_image:
+          type: string
+          format: uri
+          nullable: true
+    ResetPassword:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+        new_password:
+          type: string
+          writeOnly: true
+      required:
+      - code
+      - email
+      - new_password
+    SetTransactionPin:
+      type: object
+      properties:
+        pin:
+          type: string
+          maxLength: 4
+          minLength: 4
+      required:
+      - pin
+    Signup:
+      type: object
+      properties:
+        first_name:
+          type: string
+        last_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          writeOnly: true
+        dob:
+          type: string
+          format: date
+        gender:
+          type: string
+        address1:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        country:
+          type: string
+      required:
+      - address1
+      - city
+      - country
+      - dob
+      - email
+      - first_name
+      - gender
+      - last_name
+      - password
+      - phone
+      - state
+    Ticket:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        ticket_image:
+          type: string
+          format: uri
+          nullable: true
+      required:
+      - name
+      - price
+    TransferFunds:
+      type: object
+      properties:
+        source_account:
+          type: string
+        destination_account:
+          type: string
+        destination_bank_code:
+          type: string
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        description:
+          type: string
+        firstname:
+          type: string
+        surname:
+          type: string
+        email:
+          type: string
+          format: email
+        mobile_no:
+          type: string
+      required:
+      - amount
+      - destination_account
+      - destination_bank_code
+      - email
+      - firstname
+      - mobile_no
+      - source_account
+      - surname
+    VerifyAccount:
+      type: object
+      properties:
+        account_number:
+          type: string
+        bank_code:
+          type: string
+      required:
+      - account_number
+      - bank_code
+    VerifyEmail:
+      type: object
+      properties:
+        code:
+          type: string
+      required:
+      - code
+  securitySchemes:
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token-based authentication with required prefix "Token"
