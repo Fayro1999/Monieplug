@@ -573,3 +573,29 @@ class PaymentWebhookView(APIView):
 
 
 
+
+class BanksListView(APIView):
+    """
+    Get the list of banks from CollectionBaaS API
+    """
+    permission_classes = [AllowAny]  
+    def get(self, request):
+        url = "https://baas.dev.getrova.co.uk/banks"
+        headers = {
+            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("status") == "SUCCESS":
+                return Response({"status": "success", "banks": data.get("data", [])}, status=200)
+            else:
+                return Response({"status": "error", "message": data}, status=400)
+
+        except requests.RequestException as e:
+            return Response({"status": "error", "message": f"Network error: {str(e)}"}, status=503)
+

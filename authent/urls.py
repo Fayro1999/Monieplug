@@ -11,6 +11,7 @@ from .views import (
     VerifyAccountView,
     GetAccountBalance,
     PaymentWebhookView,
+    BanksListView,
 )
 
 urlpatterns = [
@@ -24,4 +25,5 @@ urlpatterns = [
     path("verify-account/", VerifyAccountView.as_view(), name="verify_account"),
     path("get-balance/", GetAccountBalance.as_view(), name="get_balance"),
     path("webhook/payment/", PaymentWebhookView.as_view(), name="payment_webhook"),
+    path("banks/", BanksListView.as_view(), name="banks-list"),
 ]
