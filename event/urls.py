@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     EventListCreateView, EventDetailView,
     TicketListCreateView, TicketDetailView,
-    EwalletCheckoutView
+    EwalletCheckoutView,PaystackVerifyAndPayoutView
 )
 
 urlpatterns = [
@@ -11,5 +11,6 @@ urlpatterns = [
     path('tickets/', TicketListCreateView.as_view(), name='tickets-list-create'),
     path('tickets/<int:pk>/', TicketDetailView.as_view(), name='ticket-detail'),
     path('ewallet/checkout/', EwalletCheckoutView.as_view(), name='ewallet-checkout'),
+    path('ewallet/verify/', PaystackVerifyAndPayoutView.as_view(), name='ewallet-verify'),
 ]
 

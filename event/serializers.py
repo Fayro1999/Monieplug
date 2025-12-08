@@ -13,7 +13,7 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = ['id', 'title', 'description', 'date', 'location', 'image', 'tickets']
+        fields = ['id', 'title', 'description', 'date', 'location', 'image','bank_name','bank_code','account_number','account_name', 'tickets']
 
     def create(self, validated_data):
         tickets_data = validated_data.pop('tickets')

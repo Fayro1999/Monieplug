@@ -13,6 +13,13 @@ class Event(models.Model):
     location = models.CharField(max_length=255)
     image = models.ImageField(upload_to="events/", blank=True, null=True)
     organizer = models.ForeignKey(User, on_delete=models.CASCADE)
+
+    # --- Bank details for vendor payout ---
+    bank_name = models.CharField(max_length=100, blank=True, null=True)  # e.g., Zenith Bank
+    bank_code = models.CharField(max_length=10, blank=True, null=True)   # Paystack bank code
+    account_number = models.CharField(max_length=20, blank=True, null=True)
+    account_name = models.CharField(max_length=255, blank=True, null=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -40,6 +47,7 @@ class TicketPurchase(models.Model):
     total_price = models.DecimalField(max_digits=10, decimal_places=2)
     qr_codes = models.JSONField(default=list, blank=True)  # Store all QR code filenames
     reference_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    paystack_reference = models.CharField(max_length=100, unique=True, null=True, blank=True) 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

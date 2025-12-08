@@ -16,7 +16,10 @@ from Crypto.Cipher import AES
 from django.contrib.auth.hashers import make_password, check_password
 
 import base64
-from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes 
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes,  OpenApiParameter
+#from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.types import OpenApiTypes
+
 from .serializers import (
     SignupSerializer, VerifyEmailSerializer, LoginSerializer,
     SetTransactionPinSerializer, ForgotPasswordSerializer,
@@ -477,11 +480,18 @@ class GetAccountBalance(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=None,
+        parameters=[
+            OpenApiParameter(
+                name="account_number",
+                description="Virtual account number to check balance",
+                required=True,
+                type=str
+            )
+        ],
         responses={200: OpenApiResponse(OpenApiTypes.OBJECT, description="Account balance details")}
     )
-    def post(self, request):
-        account_number = request.data.get("account_number")
+    def get(self, request):
+        account_number = request.query_params.get("account_number")
         if not account_number:
             return Response({"error": "Account number is required"}, status=400)
 
@@ -493,14 +503,7 @@ class GetAccountBalance(APIView):
 
         try:
             response = requests.get(url, headers=headers, timeout=30)
-            print("Status Code:", response.status_code)
-            print("Raw Response:", response.text)
 
-
-            # 🔹 Add this to see what Rova actually returns
-            print("Rova API Raw Response:", response.text)
-
-            # 🔹 Check if response is empty or not JSON
             if not response.text.strip():
                 return Response({"error": "Empty response from Rova API"}, status=502)
 
@@ -512,7 +515,6 @@ class GetAccountBalance(APIView):
                     "raw_response": response.text
                 }, status=502)
 
-            # 🔹 Handle non-200 responses gracefully
             if response.status_code != 200 or data.get("status") != "SUCCESS":
                 return Response(data, status=response.status_code)
 
