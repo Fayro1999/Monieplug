@@ -533,3 +533,17 @@ Thank you for your purchase!
                 "details": transfer_data
             }
         }, status=200)
+
+
+        
+
+class PaystackBanksView(APIView):
+    def get(self, request):
+        url = "https://api.paystack.co/bank"
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"
+        }
+
+        r = requests.get(url, headers=headers)
+        return Response(r.json(), status=r.status_code)
+
