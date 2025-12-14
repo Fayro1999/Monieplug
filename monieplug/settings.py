@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 import os
 from pathlib import Path
 import dj_database_url
+import cloudinary
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -48,6 +49,8 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "drf_spectacular",
     "scan2pay",
+    'cloudinary',
+    'cloudinary_storage',
 ]
 
 ROVA_BAAS_TOKEN  = "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICIzMnVJTUlnUEN4UHVfRmhqT29IZHdXaDVvanM5YXVxblRJak53RTlPaGlvIn0.eyJleHAiOjE3NjQ2OTcyMTIsImlhdCI6MTc2NDY2MTIxMiwianRpIjoiMjg2ZWIxYzMtZDlmOC00MDhlLWJkMTEtMjY0MjE2ZDY0NGFlIiwiaXNzIjoiaHR0cHM6Ly9iYWFzLWF1dGguZGV2LmdldHJvdmEuY28udWsva2V5Y2xvYWsvcmVhbG1zL3JvdmEiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiY2E0Y2I3ZjktOGU5NS00MzI4LTliZDYtNGRhM2IzNmYwYzcyIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoiMDFKTUhBOTBWQ0pQRlBTNVhFQ01FUjFCV1ciLCJhY3IiOiIxIiwicmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbIm9mZmxpbmVfYWNjZXNzIiwidW1hX2F1dGhvcml6YXRpb24iLCJkZWZhdWx0LXJvbGVzLXJvdmEiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6InByb2QgZW1haWwgYWRkcmVzcyBwcm9maWxlIiwiZW1haWxfdmVyaWZpZWQiOmZhbHNlLCJhZGRyZXNzIjp7fSwiY2xpZW50SG9zdCI6IjEwMi45MC4xMDAuMjA5IiwicHJlZmVycmVkX3VzZXJuYW1lIjoic2VydmljZS1hY2NvdW50LTAxam1oYTkwdmNqcGZwczV4ZWNtZXIxYnd3IiwiY2xpZW50QWRkcmVzcyI6IjEwMi45MC4xMDAuMjA5IiwiY2xpZW50X2lkIjoiMDFKTUhBOTBWQ0pQRlBTNVhFQ01FUjFCV1cifQ.SuMexPE2uHekJrgOrVjruzp95zjTF1jk9vSWrtTZa0EEzDUH7GysgkhqCG4mklpV2VznkBI_7ZUkaTnSpRflghiSKqLKG_WpL2LGWPOGCs4uHfiq6Gca9i_Zrgm82bMj7DGqxSiddKN-g4VrWB5WOEG_VvjPBhnRZadJ4yiIu1F6D6ZS7p63q4oc2FFeOnpycFnfws6rclRdrMStv7qDzL1Obc4bIIK5GuWAVNNV_TG9vALurM_6b40if_EsD1cvU7K77AyBWAkgYAX5HfeSCmQ-AH0xs255Jm85hnNbEaPBUgIm7pFlpl9y63Do-u9CZ0qpMWqfzG87IwpHQsdxvQ"
@@ -189,9 +192,21 @@ CACHES = {
     }
 }
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / "media"
+#MEDIA_URL = '/media/'
+#MEDIA_ROOT = BASE_DIR / "media"
 
+
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+MEDIA_URL = '/media/'
+
+
+
+cloudinary.config(
+    cloud_name='drz8m5hj2',
+    api_key='663438544161794',
+    api_secret= "4j2ixRIYabfIjWccKId87_EpUCQ",
+)
 
 
 

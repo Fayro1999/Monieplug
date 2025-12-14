@@ -15,54 +15,31 @@ from .paygate import transfer_from_wallet
 from django.core.mail import EmailMessage
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import BasePermission
 
 
 
 
 
 
- #Create Event with Tickets
+
 class EventListCreateView(generics.ListCreateAPIView):
     """
-    get:
-    List all events.
-
-    Example Response:
-    [
-        {
-            "id": 1,
-            "title": "Summer Festival",
-            "description": "Biggest festival of the year",
-            "date": "2025-12-20T18:00:00Z",
-            "location": "Lagos",
-            "tickets": [...]
-        }
-    ]
-
-    post:
-    Create a new event with tickets (organizer only).
-
-    Example Request:
-    {
-        "title": "Summer Festival",
-        "description": "Biggest festival of the year",
-        "date": "2025-12-20T18:00:00Z",
-        "location": "Lagos",
-        "tickets": [
-            {"name": "VIP", "price": "5000.00"},
-            {"name": "Regular", "price": "2000.00"}
-        ]
-    }
+    GET: List all events
+    POST: Create new event with tickets (organizer only)
     """
     queryset = Event.objects.all().order_by('-created_at')
     serializer_class = EventSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    parser_classes = [MultiPartParser]  # keep for images
 
-    def perform_create(self, serializer):
-        event = serializer.save(organizer=self.request.user)
-        tickets_data = self.request.data.get("tickets", [])
-        for ticket_data in tickets_data:
-            Ticket.objects.create(event=event, **ticket_data)
+    def get_serializer_context(self):
+        return {"request": self.request}
+
+
+    
 
 
 
@@ -91,31 +68,16 @@ class EventDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
 
-# 🔹 Create and List Tickets (Only by Event Organizer)
+
+
 class TicketListCreateView(generics.ListCreateAPIView):
     """
     get:
     List tickets for a specific event.
 
-    Example: /api/tickets/?event=1
-
-    Response:
-    [
-        {"id": 1, "name": "VIP", "price": "5000.00"},
-        {"id": 2, "name": "Regular", "price": "2000.00"}
-    ]
-
     post:
     Create a ticket (only the event organizer can do this).
-
-    Example Request:
-    {
-        "event": 1,
-        "name": "Backstage Pass",
-        "price": "10000.00"
-    }
     """
-
     queryset = Ticket.objects.all()
     serializer_class = TicketSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -126,11 +88,22 @@ class TicketListCreateView(generics.ListCreateAPIView):
             return Ticket.objects.filter(event_id=event_id)
         return Ticket.objects.all()
 
+    # <-- Add perform_create here
     def perform_create(self, serializer):
         event = serializer.validated_data['event']
         if event.organizer != self.request.user:
             raise PermissionDenied("You can only create tickets for your own events.")
-        serializer.save()
+        
+        # Handle image if included in request.FILES
+        ticket_image = self.request.FILES.get('ticket_image')
+        serializer.save(ticket_image=ticket_image)
+
+
+# Custom permission: Only event organizer can edit/delete ticket
+class IsEventOrganizer(BasePermission):
+    def has_object_permission(self, request, view, obj):
+        # obj is a Ticket instance
+        return obj.event.organizer == request.user
 
 
 # 🔹 View, Update, Delete a Ticket
@@ -160,7 +133,7 @@ class TicketDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
     
-# views.py (single-file Paystack payment + payout)
+# views.py (single-file Paystack payment + payout) - corrected
 from decimal import Decimal
 import uuid
 import requests
@@ -168,7 +141,7 @@ from django.conf import settings
 from django.core.mail import EmailMessage
 from django.contrib.auth.hashers import check_password
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema
@@ -186,8 +159,8 @@ PAYSTACK_TRANSFER_RECIPIENT_URL = f"{PAYSTACK_BASE_URL}/transferrecipient"
 PAYSTACK_TRANSFER_URL = f"{PAYSTACK_BASE_URL}/transfer"
 PAYSTACK_TRANSFER_FETCH_URL = f"{PAYSTACK_BASE_URL}/transfer/"
 
-# Platform charge function (kept from your original logic)
-def calculate_platform_charge(amount):
+# Platform charge function
+def calculate_platform_charge(amount: Decimal) -> Decimal:
     if amount < 10000:
         return Decimal(150)
     elif amount < 500000:
@@ -195,7 +168,7 @@ def calculate_platform_charge(amount):
     else:
         return Decimal(250)
 
-# Helpers (kept inside file per your request)
+# Helpers
 def _paystack_headers():
     return {
         "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
@@ -203,9 +176,6 @@ def _paystack_headers():
     }
 
 def _create_paystack_transfer_recipient(name: str, account_number: str, bank_code: str, currency: str = "NGN"):
-    """
-    Create a transfer recipient on Paystack and return recipient_code.
-    """
     payload = {
         "type": "nuban",
         "name": name[:100],
@@ -226,17 +196,12 @@ def _create_paystack_transfer_recipient(name: str, account_number: str, bank_cod
     return {"status": True, "recipient_code": recipient_code, "data": j["data"]}
 
 def _initiate_paystack_transfer(amount_naira: Decimal, recipient_code: str, reason: str):
-    """
-    Initiate a transfer to recipient_code. amount_naira is Decimal (NGN).
-    Paystack transfer amount expects kobo (integer).
-    """
     amount_kobo = int(amount_naira * 100)
     payload = {
         "source": "balance",
         "amount": amount_kobo,
         "recipient": recipient_code,
         "reason": reason[:100],
-        # client_reference not directly supported here, but we add 'reference' for idempotency in metadata:
         "metadata": {"client_reference": str(uuid.uuid4())},
     }
     resp = requests.post(PAYSTACK_TRANSFER_URL, json=payload, headers=_paystack_headers(), timeout=30)
@@ -260,29 +225,37 @@ def _fetch_paystack_transfer(transfer_id: str):
         return {"status": False, "message": j.get("message"), "data": j}
     return {"status": True, "data": j["data"]}
 
-# === Combined Checkout: initialize only (client will call verify after payment) ===
+
+# === Initialize checkout (frontend will redirect to Paystack) ===
 @extend_schema(exclude=True)
 class EwalletCheckoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Initialize a Paystack transaction for card or bank_transfer.
-        Returns authorization_url and reference for frontend to complete the payment.
-        """
         data = request.data
         ticket_id = data.get("ticket_id")
         copies = int(data.get("copies", 1))
-        full_name = data.get("full_name") or request.user.get_full_name() or request.user.username
-        email = data.get("email") or request.user.email
-        transaction_pin = data.get("transaction_pin")
         payment_method = data.get("payment_method")  # "card" or "bank_transfer"
+        transaction_pin = data.get("transaction_pin")
 
-        user = request.user
+        # user may be None for guests
+        user = request.user if request.user.is_authenticated else None
 
-        # Validate PIN
-        if not user.transaction_pin or not check_password(transaction_pin, user.transaction_pin):
-            return Response({"error": "Invalid transaction PIN"}, status=status.HTTP_403_FORBIDDEN)
+        # full_name/email: prefer provided values, else user values (if authenticated)
+        full_name = data.get("full_name") or (user.get_full_name() if user else None)
+        email = data.get("email") or (user.email if user else None)
+
+        if not full_name:
+            return Response({"error": "full_name is required for guest checkout"}, status=status.HTTP_400_BAD_REQUEST)
+        if not email:
+            return Response({"error": "email is required for guest checkout"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If user is authenticated, require and validate transaction PIN
+        if user:
+            if not transaction_pin:
+                return Response({"error": "Transaction PIN required for authenticated users"}, status=status.HTTP_403_FORBIDDEN)
+            if not getattr(user, "transaction_pin", None) or not check_password(transaction_pin, user.transaction_pin):
+                return Response({"error": "Invalid transaction PIN"}, status=status.HTTP_403_FORBIDDEN)
 
         # Validate ticket
         try:
@@ -306,7 +279,8 @@ class EwalletCheckoutView(APIView):
                 "copies": copies,
                 "full_name": full_name,
                 "email": email,
-                "user_id": str(user.id),
+                # store user id only when available - helps verify flow to link to user
+                "user_id": str(user.id) if user else None,
                 "payment_method": payment_method,
             },
         }
@@ -320,7 +294,6 @@ class EwalletCheckoutView(APIView):
         if not resp_json.get("status"):
             return Response({"error": "Paystack init failed", "details": resp_json}, status=400)
 
-        # return authorization url & reference
         return Response({
             "authorization_url": resp_json["data"]["authorization_url"],
             "reference": resp_json["data"]["reference"],
@@ -329,16 +302,12 @@ class EwalletCheckoutView(APIView):
         }, status=200)
 
 
-# === Combined Verify + Payout ===
+# === Verify payment and trigger payout ===
 @extend_schema(exclude=True)
 class PaystackVerifyAndPayoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Verify Paystack transaction reference, create purchase, then payout vendor via Paystack Transfers.
-        This endpoint assumes the buyer already completed the payment on Paystack and you provide `reference`.
-        """
         reference = request.data.get("reference")
         if not reference:
             return Response({"error": "Missing reference"}, status=status.HTTP_400_BAD_REQUEST)
@@ -363,67 +332,91 @@ class PaystackVerifyAndPayoutView(APIView):
         copies = int(metadata.get("copies", 1))
         full_name = metadata.get("full_name") or request.data.get("full_name")
         email = metadata.get("email") or request.data.get("email")
-        user_id = metadata.get("user_id") or str(request.user.id)
+        user_id = metadata.get("user_id")  # may be None for guest
 
-        # Ensure ticket & user exist
+        # Validate ticket
         try:
             ticket = Ticket.objects.get(id=ticket_id)
         except Ticket.DoesNotExist:
             return Response({"error": "Ticket referenced in metadata not found"}, status=404)
 
-        try:
-            buyer_user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            buyer_user = request.user  # fallback
+        # Determine buyer_user if user_id present
+        buyer_user = None
+        if user_id:
+            try:
+                buyer_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                buyer_user = None
 
         paid_naira = (Decimal(tx_data.get("amount", 0)) / 100).quantize(Decimal("0.01"))
         total_amount = paid_naira
         platform_charge = calculate_platform_charge(total_amount)
         vendor_amount = (total_amount - platform_charge).quantize(Decimal("0.01"))
 
+        # Prevent duplicate creation if the same reference was already processed
+        existing = TicketPurchase.objects.filter(paystack_reference=reference).first()
+        if existing:
+            # Build QR URLs for response
+            qr_urls = []
+            for qr_file in getattr(existing, "qr_codes", []):
+                qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
+            return Response({
+                "message": "Reference already processed",
+                "purchase_id": str(existing.reference_id),
+                "total_paid": float(existing.total_price),
+                "platform_charge": float(calculate_platform_charge(existing.total_price)),
+                "vendor_amount": float(existing.total_price - calculate_platform_charge(existing.total_price)),
+                "qr_codes": qr_urls,
+            }, status=200)
+
         # --- Create purchase record ---
-        purchase = TicketPurchase.objects.create(
-            ticket=ticket,
-            full_name=full_name,
-            email=email,
-            copies=copies,
-            total_price=total_amount,
-            user=buyer_user,
-            paystack_reference=reference,
-        )
+        try:
+            purchase = TicketPurchase.objects.create(
+                ticket=ticket,
+                full_name=full_name,
+                email=email,
+                copies=copies,
+                total_price=total_amount,
+                user=buyer_user,
+                paystack_reference=reference,
+            )
+        except Exception as e:
+            # unexpected create error
+            return Response({"error": "Failed to create purchase record", "details": str(e)}, status=500)
 
         # --- Payout vendor via Paystack Transfers ---
         vendor = ticket.event.organizer
         event = ticket.event
 
-        # check vendor bank details (we expect these fields on vendor)
-        #vendor_account = getattr(vendor, "bank_account_number", None)
-        #vendor_bank_code = getattr(vendor, "bank_code", None)
-        #vendor_name = getattr(vendor, "bank_account_name", None) or f"{vendor.first_name} {vendor.last_name}" if hasattr(vendor, "first_name") else getattr(vendor, "name", "Vendor")
-
-        vendor_account = event.account_number #"2123856948"
-        vendor_bank_code =  event.bank_code #"033"
-        vendor_name = event.account_name  #"John Doe"
-        vendor_bank_name = event.bank_name #"UBA"
+        # Prefer event-level bank details (you collect while creating event)
+        vendor_account = getattr(event, "account_number", None)
+        vendor_bank_code = getattr(event, "bank_code", None)
+        vendor_name = getattr(event, "account_name", None) or (f"{vendor.first_name} {vendor.last_name}" if hasattr(vendor, "first_name") else getattr(vendor, "username", "Vendor"))
+        vendor_bank_name = getattr(event, "bank_name", None)
 
         if not vendor_account or not vendor_bank_code:
-            # If vendor does not have standard bank details, respond but keep purchase recorded.
-            email_msg = EmailMessage(
+            # vendor details missing — purchase recorded, but no payout
+            # Send admin email to notify
+            EmailMessage(
                 subject=f"Payment received but no vendor bank details - {ticket.event.title}",
-                body=f"Payment for {ticket.event.title} was received ({total_amount}) but vendor has no bank_account_number/bank_code configured.",
+                body=f"Payment for {ticket.event.title} was received ({total_amount}) but vendor has no account_number/bank_code.",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 to=[settings.DEFAULT_FROM_EMAIL],
-            )
-            email_msg.send(fail_silently=True)
+            ).send(fail_silently=True)
+            # Build QR URLs
+            qr_urls = []
+            for qr_file in getattr(purchase, "qr_codes", []):
+                qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
             return Response({
                 "message": "Payment verified and purchase recorded, but vendor payout not initiated (vendor bank details missing).",
                 "purchase_id": str(purchase.reference_id),
                 "total_paid": float(total_amount),
                 "platform_charge": float(platform_charge),
                 "vendor_amount": float(vendor_amount),
+                "qr_codes": qr_urls,
             }, status=200)
 
-        # Reuse existing paystack recipient code if vendor has one stored, otherwise create one
+        # Reuse existing paystack recipient_code on the vendor (if your vendor model stores it)
         recipient_code = getattr(vendor, "paystack_recipient_code", None)
 
         if not recipient_code:
@@ -433,8 +426,7 @@ class PaystackVerifyAndPayoutView(APIView):
                 bank_code=str(vendor_bank_code),
             )
             if not create_rec.get("status"):
-                # Recipient creation failed — still keep purchase, notify admin, return error
-                # send admin email
+                # Recipient creation failed — keep purchase, notify admin and return error details
                 EmailMessage(
                     subject="Paystack recipient creation failed",
                     body=f"Failed to create recipient for vendor {vendor_name}. Details: {create_rec}",
@@ -442,21 +434,26 @@ class PaystackVerifyAndPayoutView(APIView):
                     to=[settings.DEFAULT_FROM_EMAIL],
                 ).send(fail_silently=True)
 
+                qr_urls = []
+                for qr_file in getattr(purchase, "qr_codes", []):
+                    qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
+
                 return Response({
                     "message": "Payment verified and purchase recorded, but creating Paystack transfer recipient failed.",
                     "details": create_rec,
                     "purchase_id": str(purchase.reference_id),
+                    "qr_codes": qr_urls,
                 }, status=500)
 
             recipient_code = create_rec["recipient_code"]
 
-            # Attempt to save recipient_code to vendor model if attribute exists
+            # Optionally save recipient_code to vendor model (if it has that field)
             try:
                 if hasattr(vendor, "paystack_recipient_code"):
                     setattr(vendor, "paystack_recipient_code", recipient_code)
                     vendor.save(update_fields=["paystack_recipient_code"])
             except Exception:
-                # ignore save errors, but recipient created successfully so we proceed
+                # ignore save errors
                 pass
 
         # Initiate transfer (from Paystack balance)
@@ -472,18 +469,23 @@ class PaystackVerifyAndPayoutView(APIView):
                 to=[settings.DEFAULT_FROM_EMAIL],
             ).send(fail_silently=True)
 
+            qr_urls = []
+            for qr_file in getattr(purchase, "qr_codes", []):
+                qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
+
             return Response({
                 "message": "Payment verified and purchase recorded, but vendor payout initiation failed.",
                 "purchase_id": str(purchase.reference_id),
                 "transfer_error": transfer_init,
+                "qr_codes": qr_urls,
             }, status=500)
 
         transfer_data = transfer_init["data"]
         transfer_id = transfer_data.get("id")
 
-        # Optionally wait/fetch transfer status immediately (may be 'success' or 'pending')
+        # Optionally fetch transfer status (immediate)
         transfer_fetch = _fetch_paystack_transfer(str(transfer_id))
-        transfer_status = transfer_fetch.get("data", {}).get("status") if transfer_fetch.get("status") else "unknown"
+        transfer_status = transfer_fetch.get("data", {}).get("status") if transfer_fetch.get("status") else transfer_data.get("status", "unknown")
 
         # --- Send receipt email to buyer ---
         email_subject = f"Your Ticket Receipt - {ticket.event.title}"
@@ -518,7 +520,7 @@ Thank you for your purchase!
         # Build QR code URLs for response
         qr_urls = []
         for qr_file in getattr(purchase, "qr_codes", []):
-             qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
+            qr_urls.append(request.build_absolute_uri(f"/media/qrcodes/{qr_file}"))
 
         return Response({
             "message": "Payment verified, purchase recorded, vendor payout initiated.",

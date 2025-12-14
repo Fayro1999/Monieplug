@@ -1,28 +1,60 @@
-# events/serializers.py
+import json
 from rest_framework import serializers
-from .models import Event
-from .models import Ticket, TicketPurchase
+from .models import Event, Ticket, TicketPurchase
 
 class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
-        fields = ['name', 'price','ticket_image']
+        fields = ['name', 'price', 'ticket_image']
+        
+
+
 
 class EventSerializer(serializers.ModelSerializer):
-    tickets = TicketSerializer(many=True)  # Nested tickets
-
+    tickets = TicketSerializer(many=True, read_only=True)
     class Meta:
         model = Event
-        fields = ['id', 'title', 'description', 'date', 'location', 'image','bank_name','bank_code','account_number','account_name', 'tickets']
+        fields = [
+            'id',
+            'title',
+            'description',
+            'date',
+            'location',
+            'image',
+            'bank_name',
+            'bank_code',
+            'account_number',
+            'account_name',
+            'tickets',
+        ]
 
     def create(self, validated_data):
-        tickets_data = validated_data.pop('tickets')
-        event = Event.objects.create(**validated_data)
-        for ticket_data in tickets_data:
-            Ticket.objects.create(event=event, **ticket_data)
+        request = self.context['request']
+
+        organizer = request.user
+        event = Event.objects.create(organizer=organizer, **validated_data)
+
+        # tickets JSON comes directly from request.data
+        tickets_raw = request.data.get('tickets')
+
+        try:
+            tickets_data = json.loads(tickets_raw)
+        except Exception:
+            raise serializers.ValidationError({
+                "tickets": "Invalid tickets JSON"
+            })
+
+        for index, ticket in enumerate(tickets_data):
+            ticket_image = request.FILES.get(f'tickets[{index}][ticket_image]')
+
+            Ticket.objects.create(
+                event=event,
+                name=ticket['name'],
+                price=ticket['price'],
+                ticket_image=ticket_image
+            )
+
         return event
-
-
 
 
 
