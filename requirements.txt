@@ -2,10 +2,12 @@ asgiref==3.9.1
 attrs==25.3.0
 certifi==2025.8.3
 charset-normalizer==3.4.3
+cloudinary==1.44.1
 colorama==0.4.6
 dj-database-url==3.0.1
 Django==5.2.5
 django-anymail==13.1
+django-cloudinary-storage==0.3.0
 django-cors-headers==4.9.0
 django-redis==6.0.0
 djangorestframework==3.16.1
