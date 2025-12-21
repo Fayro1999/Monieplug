@@ -18,6 +18,10 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
+import hmac, hashlib, json
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+
 
 
 
@@ -549,3 +553,35 @@ class PaystackBanksView(APIView):
         r = requests.get(url, headers=headers)
         return Response(r.json(), status=r.status_code)
 
+
+
+
+
+@csrf_exempt
+def paystack_webhook(request):
+    signature = request.headers.get("x-paystack-signature")
+
+    computed = hmac.new(
+        settings.PAYSTACK_SECRET_KEY.encode(),
+        request.body,
+        hashlib.sha512
+    ).hexdigest()
+
+    if signature != computed:
+        return HttpResponse(status=400)
+
+    payload = json.loads(request.body)
+
+    event = payload.get("event")
+    data = payload.get("data", {})
+
+    if event == "charge.success":
+        reference = data.get("reference")
+
+        # VERY IMPORTANT: never trigger payout blindly
+        # Only mark verified or enqueue processing
+        TicketPurchase.objects.filter(
+            paystack_reference=reference
+        ).update(webhook_verified=True)
+
+    return HttpResponse(status=200)
