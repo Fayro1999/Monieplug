@@ -1,0 +1,26 @@
+[33m82fb08d[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m)[m updated settings
+[33me665ac8[m updated settings
+[33mb47a24b[m[33m ([m[1;31morigin/main[m[33m)[m Add Cloudinary packages to requirements
+[33mf23aa8c[m Configure Cloudinary, clean media files, and update event logic
+[33mda61b05[m updated settings
+[33m5691dad[m updated settings
+[33m607e5ed[m Remove cache files and update project
+[33m8fdf7c9[m Updated project settings to monieplug and other fixes
+[33m3dfbfc3[m Updated project settings to monieplug and other fixes
+[33m23f68d1[m Updated project settings to monieplug and other fixes
+[33m4b46992[m updated settings
+[33m417a7bb[m removed drf-yasg and added drf-spectacular
+[33ma3424af[m updated settings
+[33ma13c0b0[m updated settings
+[33ma104a4c[m Fix DisallowedHost by adding Render domain to ALLOWED_HOSTS
+[33m1f1564c[m Add pycryptodome for AES encryption
+[33m90c38bb[m Add qrcode dependency
+[33m706154a[m Upgrade Pillow to 11.0.0 for Python 3.13 compatibility
+[33m64c1434[m Add qrcode dependency
+[33mccd7b8b[m Fix pillow version
+[33m042211b[m Add psycopg2-binary
+[33mdc85e4f[m Add dj-database-url
+[33ma02e87d[m Add gunicorn to requirements
+[33ma2ab8c0[m Add requirements.txt
+[33m4025d2a[m first commit
+[33m81289da[m first commit
