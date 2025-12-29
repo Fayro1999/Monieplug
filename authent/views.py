@@ -48,11 +48,6 @@ class SignupAndOpenVirtualAccount(APIView):
     """
     post:
     Register a new user and open a Rova BaaS static virtual account.
-
-    Steps:
-    1. Create a user (inactive until verified).
-    2. Call Rova BaaS API to open a static virtual account.
-    3. Send a verification code to user's email.
     """
 
     permission_classes = [AllowAny]
@@ -67,13 +62,13 @@ class SignupAndOpenVirtualAccount(APIView):
         email = data.get("email")
         password = data.get("password")
 
-        # 🔎 1️⃣ Check duplicates
+        # 1️⃣ Check duplicates
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email already exists"}, status=status.HTTP_400_BAD_REQUEST)
         if User.objects.filter(phone=phone).exists():
             return Response({"error": "Phone already exists"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2️⃣ Create user (inactive until email verification)
+        # 2️⃣ Create user
         verification_code = str(random.randint(100000, 999999))
         user = User.objects.create_user(
             email=email,
@@ -85,23 +80,22 @@ class SignupAndOpenVirtualAccount(APIView):
         )
         cache.set(f"verification_code:{verification_code}", email, timeout=300)
 
-        # 3️⃣ Call Rova BaaS API to open virtual account
+        # 3️⃣ Call Rova BaaS API
         rova_url = "https://baas.dev.getrova.co.uk/virtual-account/static"
         headers = {
-            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",  # store your token in settings or env
+            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",
             "Content-Type": "application/json",
         }
         payload = {
             "email": email,
             "firstName": data.get("first_name"),
             "lastName": data.get("last_name"),
-            "phone": phone
+            "phone": phone,
         }
 
         try:
             response = requests.post(rova_url, json=payload, headers=headers, timeout=30)
             resp_data = response.json()
-            print("Rova API Response:", resp_data)  # Debug
 
             if response.status_code == 200 and resp_data.get("status") == "SUCCESS":
                 success_list = resp_data.get("data", {}).get("successfulVirtualAccounts", [])
@@ -110,12 +104,10 @@ class SignupAndOpenVirtualAccount(APIView):
                     user.virtual_account_number = acct_info.get("virtualAccountNumber")
                     user.bank_name = "Rova BaaS"
                     user.save()
-            else:
-                print("Rova API error:", resp_data)
         except Exception as e:
-            print("Error while creating Rova virtual account:", str(e))
+            print("Rova error:", e)
 
-        # 4️⃣ Send email verification code
+        # 4️⃣ Send email (NON-BLOCKING)
         subject = "Verify your email - YourApp"
         message = (
             f"Hello {user.first_name},\n\n"
@@ -123,15 +115,28 @@ class SignupAndOpenVirtualAccount(APIView):
             f"It expires in 5 minutes.\n\n"
             f"Thanks,\nYourApp Team"
         )
-        send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email])
+
+        try:
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [email],
+                fail_silently=True,
+            )
+        except Exception as e:
+            print("Email failed:", e)
 
         # 5️⃣ Return response
-        return Response({
-            "message": "Account created. Please verify email.",
-            "verification_code": verification_code,  # ⚠️ Remove in production
-            "virtual_account_number": user.virtual_account_number,
-            "bank_name": user.bank_name
-        }, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                "message": "Account created. Please verify email.",
+                "verification_code": verification_code,  # remove in production
+                "virtual_account_number": user.virtual_account_number,
+                "bank_name": user.bank_name,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class VerifyEmail(APIView):
