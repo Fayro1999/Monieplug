@@ -32,7 +32,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     "monieplug.onrender.com", "127.0.0.1",
     "localhost",
-    "https://money-plug-wwiq.vercel.app"
+    "money-plug-wwiq.vercel.app"
     
     ]
 
