@@ -44,12 +44,28 @@ User = get_user_model()
 #from .serializers import SignupSerializer
 
 
-class SignupAndOpenVirtualAccount(APIView):
-    """
-    post:
-    Register a new user and open a Rova BaaS static virtual account.
-    """
+import random
+import uuid
+import requests
+from django.core.cache import cache
+from django.core.mail import send_mail
+from django.conf import settings
 
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes
+
+from .serializers import SignupSerializer
+from .models import User
+
+
+class SignupAndOpenWallet(APIView):
+    """
+    Register a new user and open a customer wallet via WAAS API.
+    """
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -62,13 +78,17 @@ class SignupAndOpenVirtualAccount(APIView):
         email = data.get("email")
         password = data.get("password")
 
-        # 1️⃣ Check duplicates
+        # Check duplicates
         if User.objects.filter(email=email).exists():
-            return Response({"error": "Email already exists"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Email already exists"}, status=400)
         if User.objects.filter(phone=phone).exists():
-            return Response({"error": "Phone already exists"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Phone already exists"}, status=400)
 
-        # 2️⃣ Create user
+        # Ensure BVN or NIN is provided
+        if not data.get("bvn") and not data.get("nin_user_id"):
+            return Response({"error": "BVN or NIN is required"}, status=400)
+
+        #Create user
         verification_code = str(random.randint(100000, 999999))
         user = User.objects.create_user(
             email=email,
@@ -80,63 +100,80 @@ class SignupAndOpenVirtualAccount(APIView):
         )
         cache.set(f"verification_code:{verification_code}", email, timeout=300)
 
-        # 3️⃣ Call Rova BaaS API
-        rova_url = "https://baas.dev.getrova.co.uk/virtual-account/static"
-        headers = {
-            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "email": email,
-            "firstName": data.get("first_name"),
-            "lastName": data.get("last_name"),
-            "phone": phone,
+        # 4️⃣ Authenticate with WAAS
+        auth_url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+        auth_payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
         }
 
         try:
-            response = requests.post(rova_url, json=payload, headers=headers, timeout=30)
-            resp_data = response.json()
-
-            if response.status_code == 200 and resp_data.get("status") == "SUCCESS":
-                success_list = resp_data.get("data", {}).get("successfulVirtualAccounts", [])
-                if success_list:
-                    acct_info = success_list[0]
-                    user.virtual_account_number = acct_info.get("virtualAccountNumber")
-                    user.bank_name = "Rova BaaS"
-                    user.save()
+            auth_resp = requests.post(auth_url, json=auth_payload, timeout=30)
+            auth_resp.raise_for_status()
+            access_token = auth_resp.json().get("accessToken")
         except Exception as e:
-            print("Rova error:", e)
+            return Response({"error": "Failed to connect to WAAS auth", "details": str(e)}, status=500)
 
-        # 4️⃣ Send email (NON-BLOCKING)
-        subject = "Verify your email - YourApp"
+        # 5️⃣ Prepare wallet payload
+        wallet_payload = {
+            "transactionTrackingRef": str(uuid.uuid4()),
+            "lastName": user.last_name,
+            "otherNames": user.first_name,
+            "accountName": f"MONIEPLUG/{user.first_name} {user.last_name}",
+            "phoneNo": user.phone,
+            "gender": int(data.get("gender", 0)),
+            "dateOfBirth": data.get("date_of_birth"),  # must be DD/MM/YYYY
+            "address": data.get("address"),
+            "email": user.email,
+        }
+        if data.get("bvn"):
+            wallet_payload["bvn"] = data.get("bvn")
+        if data.get("nin_user_id"):
+            wallet_payload["nin"] = data.get("nin_user_id")
+
+        wallet_url = "http://102.216.128.75:9090/waas/api/v1/open_wallet"
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+        # 6️⃣ Open wallet
+        try:
+            wallet_resp = requests.post(wallet_url, json=wallet_payload, headers=headers, timeout=30)
+            wallet_resp.raise_for_status()
+            wallet_data = wallet_resp.json()
+
+            if wallet_data.get("status", "").upper() == "SUCCESS":
+                account_info = wallet_data.get("data", {})
+                # Use customerID if walletId is missing
+                user.wallet_id = account_info.get("walletId") or account_info.get("customerID")
+                user.wallet_account_number = account_info.get("accountNumber")
+                user.save()
+            else:
+                return Response({"error": "Wallet creation failed", "waas_response": wallet_data}, status=400)
+        except Exception as e:
+            return Response({"error": "Failed to open wallet", "details": str(e)}, status=500)
+
+        # 7️⃣ Send verification email
+        subject = "Verify your email"
         message = (
             f"Hello {user.first_name},\n\n"
             f"Your verification code is {verification_code}.\n"
             f"It expires in 5 minutes.\n\n"
-            f"Thanks,\nYourApp Team"
+            f"Thanks."
         )
-
         try:
-            send_mail(
-                subject,
-                message,
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=True,
-            )
+            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
         except Exception as e:
-            print("Email failed:", e)
+            print("Email error:", e)
 
-        # 5️⃣ Return response
-        return Response(
-            {
-                "message": "Account created. Please verify email.",
-                "verification_code": verification_code,  # remove in production
-                "virtual_account_number": user.virtual_account_number,
-                "bank_name": user.bank_name,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        # 8️⃣ Return response
+        return Response({
+            "message": "Account created successfully. Please verify email.",
+            "wallet_id": user.wallet_id,
+            "account_number": user.wallet_account_number,
+            "waas_response": wallet_data,
+            "verification_code":verification_code
+        }, status=201)
 
 
 class VerifyEmail(APIView):
@@ -235,8 +272,8 @@ class Login(APIView):
                 "id": str(user.id),
                 "email": user.email,
                 "phone": user.phone,
-                "virtual_account": user.virtual_account_number,
-                "bank": user.bank_name,
+                "wallet_id": user.wallet_id,
+                "account_number": user.wallet_account_number,
             }
         }, status=status.HTTP_200_OK)
 
@@ -311,110 +348,126 @@ class ResetPassword(APIView):
 
             # Fund Transfer
 
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiTypes, OpenApiResponse
+from django.conf import settings
+from django.contrib.auth.hashers import check_password
+import requests
+import uuid
+from datetime import datetime
+
 class TransferFundsView(APIView):
     """
-    post:
-    Transfer funds to another bank account using Rova BaaS API.
-
-    Request body:
-    {
-        "destinationAccount": "4000027790",
-        "destinationBankCode": "000003",
-        "amount": "1000.50",
-        "narration": "Internal Transfer",
-        "transaction_pin": "1234"
-    }
-
-    Response:
-    {
-        "status": "SUCCESS",
-        "data": {
-            "status": "SUCCESSFUL",
-            "reference": "2323211334232",
-            "message": "Approved or Completed Successfully",
-            "code": "SUCCESS"
-        },
-        "message": "success"
-    }
+    Transfer funds from user wallet to another bank using WAAS API
     """
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        request=TransferFundsSerializer,
+        request=OpenApiTypes.OBJECT,
         responses={200: OpenApiResponse(OpenApiTypes.OBJECT, description="Transfer result")}
     )
     def post(self, request):
         user = request.user
         data = request.data
 
-        # 1️⃣ Check if transaction PIN is set
+        # 1️⃣ Check transaction PIN
         if not user.transaction_pin:
             return Response(
-                {"detail": "You need to set a transaction PIN before making transfers."},
+                {"detail": "Set a transaction PIN first."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # 2️⃣ Verify transaction PIN
         pin = data.get("transaction_pin")
         if not pin:
-            return Response(
-                {"detail": "Transaction PIN is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": "Transaction PIN is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not check_password(pin, user.transaction_pin):
-            return Response(
-                {"detail": "Invalid transaction PIN."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"detail": "Invalid transaction PIN."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 3️⃣ Validate required fields
+        # 2️⃣ Validate required fields
         required_fields = ["destinationAccount", "destinationBankCode", "amount"]
-        missing_fields = [f for f in required_fields if not data.get(f)]
-        if missing_fields:
-            return Response(
-                {"detail": f"Missing fields: {', '.join(missing_fields)}"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        missing = [f for f in required_fields if not data.get(f)]
+        if missing:
+            return Response({"detail": f"Missing fields: {', '.join(missing)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 4️⃣ Prepare transfer data
-        payload = {
-            "destinationAccount": data["destinationAccount"],
-            "destinationBankCode": data["destinationBankCode"],
-            "amount": data["amount"],
-            "clientReference": str(uuid.uuid4()),
-            "narration": data.get("narration", "Internal Transfer"),
-        }
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",  # defined in settings.py
-        }
-
-        # 5️⃣ Send request to Rova API
+        # Ensure amount is numeric
         try:
-            response = requests.post(
-                "https://baas.dev.getrova.co.uk/transfer",
+            amount = float(data["amount"])
+        except (ValueError, TypeError):
+            return Response({"detail": "Amount must be a number"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3️⃣ Authenticate WAAS
+        try:
+            auth_resp = requests.post(
+                "http://102.216.128.75:9090/waas/api/v1/authenticate",
+                json={
+                    "username": settings.WAAS_USERNAME,
+                    "password": settings.WAAS_PASSWORD,
+                    "clientId": settings.WAAS_CLIENT_ID,
+                    "clientSecret": settings.WAAS_CLIENT_SECRET,
+                },
+                timeout=30
+            )
+            auth_resp.raise_for_status()
+            access_token = auth_resp.json().get("accessToken")
+        except Exception as e:
+            return Response({"error": "WAAS authentication failed", "details": str(e)}, status=500)
+
+        # 4️⃣ Prepare WAAS payload
+        short_ref = str(uuid.uuid4())[:25]  # max 25 chars
+        short_name = f"{user.first_name} {user.last_name}"[:25]
+        narration = data.get("narration", "Payment transfer")[:25]
+
+        payload = {
+    "customer": {
+        "account": {
+            "bank": data["destinationBankCode"],
+            "number": data["destinationAccount"],
+            "senderaccountnumber": user.wallet_account_number,
+            "name": f"{user.first_name} {user.last_name}",
+            "sendername": f"{user.first_name} {user.last_name}"
+        }
+    },
+    "order": {
+        "amount": str(int(amount)),  # MUST be string
+        "currency": "NGN",
+        "description": narration,
+        "country": "NG"
+    },
+    "narration": narration,
+    "transaction": {
+        "reference": short_ref
+    },
+    "transactionType": "OTHER_BANKS"
+}
+
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+        # 5️⃣ Call WAAS transfer API
+        try:
+            waas_resp = requests.post(
+                "http://102.216.128.75:9090/waas/api/v1/wallet_other_banks",
                 json=payload,
                 headers=headers,
-                timeout=30,
+                timeout=30
             )
-            response_data = response.json()
+            waas_data = waas_resp.json()
 
-            if response.status_code == 200 and response_data.get("status") == "SUCCESS":
-                return Response(response_data, status=status.HTTP_200_OK)
+            if waas_data.get("status", "").upper() == "SUCCESS":
+                return Response({
+                    "message": "Transfer successful",
+                    "reference": short_ref,
+                    "amount": amount,
+                    "waas_response": waas_data
+                }, status=200)
             else:
-                return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Transfer failed", "waas_response": waas_data}, status=400)
 
-        except requests.exceptions.RequestException as e:
-            return Response(
-                {"detail": f"Transfer failed due to network error: {str(e)}"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-
-
-
-
+        except Exception as e:
+            return Response({"error": "Transfer request failed", "details": str(e)}, status=500)
 
 
         #Verify Account
@@ -481,128 +534,389 @@ class VerifyAccountView(APIView):
 
 
 
-class GetAccountBalance(APIView):
+
+
+
+
+
+class WalletEnquiryView(APIView):
+    """
+    Fetch wallet details using WAAS wallet enquiry API
+    """
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(
-        parameters=[
-            OpenApiParameter(
-                name="account_number",
-                description="Virtual account number to check balance",
-                required=True,
-                type=str
-            )
-        ],
-        responses={200: OpenApiResponse(OpenApiTypes.OBJECT, description="Account balance details")}
-    )
-    def get(self, request):
-        account_number = request.query_params.get("account_number")
-        if not account_number:
-            return Response({"error": "Account number is required"}, status=400)
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
 
-        url = f"https://baas.dev.getrova.co.uk/virtual-account/static/{account_number}"
-        headers = {
-            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",
-            "Content-Type": "application/json",
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
         }
 
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            resp = requests.post(url, json=payload, timeout=30)
+            data = resp.json()
+            return data.get("accessToken")
+        except Exception:
+            return None
 
-            if not response.text.strip():
-                return Response({"error": "Empty response from Rova API"}, status=502)
+    def post(self, request):
 
-            try:
-                data = response.json()
-            except ValueError:
-                return Response({
-                    "error": "Invalid JSON response from Rova API",
-                    "raw_response": response.text
-                }, status=502)
+        account_no = request.data.get("accountNo")
 
-            if response.status_code != 200 or data.get("status") != "SUCCESS":
-                return Response(data, status=response.status_code)
+        if not account_no:
+            return Response(
+                {"error": "accountNo is required"},
+                status=400
+            )
 
-            result = {
-                "account_id": data["data"].get("virtualAccountId"),
-                "account_name": data["data"].get("virtualAccountName"),
-                "bank_name": data["data"].get("bankName"),
-                "balance": data["data"].get("transactionAmount"),
-                "status": data.get("status"),
-                "message": data.get("message"),
-            }
+        # 🔐 STEP 1: Get WAAS token
+        token = self.get_waas_token()
 
-            return Response(result, status=200)
+        if not token:
+            return Response(
+                {"error": "Failed to authenticate with WAAS"},
+                status=500
+            )
+
+        # 🔐 STEP 2: Call wallet enquiry WITH token
+        url = "http://102.216.128.75:9090/waas/api/v1/wallet_enquiry"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "accountNo": str(account_no)
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            data = response.json()
+
+            if data.get("status", "").upper() != "SUCCESS":
+                return Response(
+                    {
+                        "status": data.get("status"),
+                        "message": data.get("message"),
+                        "data": data.get("data")
+                    },
+                    status=400
+                )
+
+            return Response(
+                {
+                    "status": data.get("status"),
+                    "message": data.get("message"),
+                    "account": data.get("data")
+                },
+                status=200
+            )
 
         except requests.exceptions.RequestException as e:
-            return Response({"error": f"Network error: {str(e)}"}, status=503)
-
-
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": f"Network error: {str(e)}"
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
 
 
         
+
+
+
+
+
+
 
 class PaymentWebhookView(APIView):
-    @extend_schema(
-        request=None,
-        responses={200: OpenApiResponse(OpenApiTypes.OBJECT, description="Webhook event processed")}
-    )
+
+    authentication_classes = []
+    permission_classes = []
+
+    # =========================
+    # BASIC AUTH
+    # =========================
+    def _is_valid_basic_auth(self, request):
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header or not auth_header.startswith("Basic "):
+            return False
+
+        try:
+            encoded = auth_header.split(" ")[1]
+            decoded = base64.b64decode(encoded).decode("utf-8")
+            username, password = decoded.split(":")
+        except Exception:
+            return False
+
+        return (
+            username == settings.WEBHOOK_USERNAME and
+            password == settings.WEBHOOK_PASSWORD
+        )
+
+    # =========================
+    # MAIN WEBHOOK ENTRY
+    # =========================
     def post(self, request):
+
+        # AUTH CHECK
+        if not self._is_valid_basic_auth(request):
+            return Response({
+                "success": False,
+                "code": "01",
+                "status": "FAILED",
+                "message": "Unauthorized"
+            }, status=403)
+
+        event = (request.query_params.get("event") or "").strip().lower()
         data = request.data
 
-        
+        if event == "transfer":
+            return self.handle_transfer(data)
 
-        # ✅ Verify Signature
-        request_ref = data.get("request_ref")
-        signature_header = request.headers.get("Signature")
-        app_secret = "9dREG1FeyoE3Slxp"
+        elif event == "account-upgrade":
+            return self.handle_account_upgrade(data)
 
-        expected_signature = hashlib.md5(f"{request_ref};{app_secret}".encode()).hexdigest()
-        if signature_header != expected_signature:
-            return Response({"error": "Invalid signature"}, status=403)
+        return Response({
+            "success": False,
+            "code": "02",
+            "status": "FAILED",
+            "message": "Invalid event type"
+        }, status=400)
 
-        # ✅ Process only successful credits
-        details = data.get("details", {})
-        if details.get("status") != "Successful":
-            return Response({"status": "Ignored non-success transaction"}, status=200)
+    # =========================
+    # TRANSFER HANDLER
+    # =========================
+    def handle_transfer(self, data):
 
-        # ✅ Extract transaction details
-        amount = details.get("amount")
-        account = details.get("meta", {}).get("cr_account")
-        sender_name = details.get("meta", {}).get("originator_account_name")
-        narration = details.get("meta", {}).get("narration")
+        transaction_ref = data.get("transactionref")
 
-        # TODO: match this cr_account to a user in your system
-        # TODO: update their wallet balance or trigger related service
+        try:
+            account_number = data.get("accountnumber")  # FIXED TYPO
+            amount = Decimal(str(data.get("amount", "0")))
+            narration = data.get("narration")
+            sender_name = data.get("sendername")
 
-        return Response({"status": "Payment processed"}, status=200)
+            # prevent duplicate credit
+            if Transaction.objects.filter(reference=transaction_ref).exists():
+                return self.success_response(transaction_ref)
+
+            user = User.objects.get(wallet_account_number=account_number)
+
+            with db_transaction.atomic():
+
+                # ⚠️ IMPORTANT:
+                # You currently do NOT have a balance field
+                # So we only store transaction history
+
+                Transaction.objects.create(
+                    user=user,
+                    amount=amount,
+                    transaction_type="credit",
+                    reference=transaction_ref,
+                    narration=narration,
+                    sender_name=sender_name,
+                    status="successful"
+                )
+
+            return self.success_response(transaction_ref)
+
+        except User.DoesNotExist:
+            return self.success_response(transaction_ref)
+
+        except Exception as e:
+            print("Webhook error:", str(e))
+            return self.success_response(transaction_ref)
+
+    # =========================
+    # ACCOUNT UPGRADE HANDLER
+    # =========================
+    def handle_account_upgrade(self, data):
+
+        account_number = data.get("accountNumber")
+        status = data.get("status")
+        message = data.get("message")
+
+        try:
+            user = User.objects.get(wallet_account_number=account_number)
+
+            # Example logic (you can expand this later)
+            if status.lower() == "approved":
+                user.is_active = True
+                user.save()
+
+        except User.DoesNotExist:
+            pass
+
+        return self.success_response()
+
+    # =========================
+    # SUCCESS RESPONSE
+    # =========================
+    def success_response(self, transaction_ref=None):
+
+        response = {
+            "message": "Acknowledged",
+            "status": "SUCCESS",
+            "success": True,
+            "code": "00",
+        }
+
+        if transaction_ref:
+            response["transactionRef"] = transaction_ref
+
+        return Response(response, status=200)
 
 
 
 
-class BanksListView(APIView):
+
+import json
+import requests
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+
+class WAASBanksView(APIView):
     """
-    Get the list of banks from CollectionBaaS API
+    Fetch list of banks from WAAS API
     """
-    permission_classes = [AllowAny]  
+
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+
+            try:
+                data = resp.json()
+            except ValueError:
+                data = json.loads(resp.text)
+
+            return data.get("accessToken")
+
+        except Exception:
+            return None
+
     def get(self, request):
-        url = "https://baas.dev.getrova.co.uk/banks"
+
+        # 🔐 STEP 1: TOKEN
+        token = self.get_waas_token()
+
+        if not token:
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": "WAAS authentication failed",
+                    "banks": []
+                },
+                status=500
+            )
+
+        url = "http://102.216.128.75:9090/waas/api/v1/get_banks"
+
         headers = {
-            "Authorization": f"Bearer {settings.ROVA_BAAS_TOKEN}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
 
         try:
             response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            data = response.json()
 
-            if data.get("status") == "SUCCESS":
-                return Response({"status": "success", "banks": data.get("data", [])}, status=200)
-            else:
-                return Response({"status": "error", "message": data}, status=400)
+            # 🔥 SAFE PARSE
+            try:
+                data = response.json()
+            except ValueError:
+                data = json.loads(response.text)
 
-        except requests.RequestException as e:
-            return Response({"status": "error", "message": f"Network error: {str(e)}"}, status=503)
+            # WAAS must succeed
+            if str(data.get("status", "")).upper() != "SUCCESS":
+                return Response(
+                    {
+                        "status": data.get("status"),
+                        "message": data.get("message"),
+                        "banks": []
+                    },
+                    status=400
+                )
 
+            # 🔥 SMART EXTRACTION (FIX FOR YOUR ERROR)
+            raw_banks = (
+                data.get("bankList") or
+                (data.get("data", {}) if isinstance(data.get("data"), dict) else None) or
+                data.get("data")
+            )
+
+            # If still string → decode
+            if isinstance(raw_banks, str):
+                try:
+                    raw_banks = json.loads(raw_banks)
+                except:
+                    raw_banks = None
+
+            # Final safety check
+            if not isinstance(raw_banks, list):
+                return Response(
+                    {
+                        "status": "FAILED",
+                        "message": "WAAS returned unexpected bank format",
+                        "raw_data": data
+                    },
+                    status=500
+                )
+
+            # 🔥 CLEAN OUTPUT
+            banks = [
+                {
+                    "name": (b.get("bankName") or "").strip(),
+                    "code": (b.get("bankCode") or "").strip(),
+                    "nibss_code": (b.get("nibssBankCode") or "").strip(),
+                }
+                for b in raw_banks
+                if isinstance(b, dict)
+            ]
+
+            return Response(
+                {
+                    "status": "SUCCESS",
+                    "message": data.get("message", "Success"),
+                    "banks": banks
+                },
+                status=200
+            )
+
+        except requests.exceptions.RequestException as e:
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": f"Network error: {str(e)}",
+                    "banks": []
+                },
+                status=503
+            )
+
+        except Exception as e:
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": str(e),
+                    "banks": []
+                },
+                status=500
+            )

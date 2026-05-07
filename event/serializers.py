@@ -12,6 +12,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
 class EventSerializer(serializers.ModelSerializer):
     tickets = TicketSerializer(many=True, read_only=True)
+
     class Meta:
         model = Event
         fields = [
@@ -21,20 +22,18 @@ class EventSerializer(serializers.ModelSerializer):
             'date',
             'location',
             'image',
-            'bank_name',
-            'bank_code',
-            'account_number',
-            'account_name',
             'tickets',
         ]
 
     def create(self, validated_data):
         request = self.context['request']
-
         organizer = request.user
-        event = Event.objects.create(organizer=organizer, **validated_data)
 
-        # tickets JSON comes directly from request.data
+        event = Event.objects.create(
+            organizer=organizer,
+            **validated_data
+        )
+
         tickets_raw = request.data.get('tickets')
 
         try:
@@ -58,7 +57,6 @@ class EventSerializer(serializers.ModelSerializer):
 
 
 
-
  #Ticket Purchase
 
 class TicketPurchaseSerializer(serializers.ModelSerializer):
@@ -68,35 +66,23 @@ class TicketPurchaseSerializer(serializers.ModelSerializer):
         model = TicketPurchase
         fields = [
             'id', 'user', 'full_name', 'email', 'confirm_email',
-            'ticket', 'quantity', 'total_price', 'qr_code',
+            'ticket', 'copies', 'total_price', 'qr_codes',
             'reference_id', 'created_at'
         ]
-        read_only_fields = ['user', 'total_price', 'qr_code', 'reference_id', 'created_at']
+        read_only_fields = ['user', 'total_price', 'qr_codes', 'reference_id', 'created_at']
 
     def validate(self, data):
         if data['email'] != data['confirm_email']:
             raise serializers.ValidationError("Emails do not match.")
 
-        ticket = data['ticket']
-        quantity = data['quantity']
-
-        # Check if there's a ticket limit
-        if ticket.quantity is not None and quantity > ticket.quantity:
-            raise serializers.ValidationError("Not enough tickets available.")
-
         return data
 
     def create(self, validated_data):
         validated_data.pop('confirm_email')
+
         ticket = validated_data['ticket']
-        quantity = validated_data['quantity']
+        copies = validated_data['copies']
 
-        # Calculate total price
-        validated_data['total_price'] = ticket.price * quantity
-
-        # Reduce available quantity (if limited)
-        if ticket.quantity is not None:
-            ticket.quantity -= quantity
-            ticket.save()
+        validated_data['total_price'] = ticket.price * copies
 
         return super().create(validated_data)

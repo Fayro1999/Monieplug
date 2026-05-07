@@ -1,7 +1,7 @@
 # authent/urls.py
 from django.urls import path
 from .views import (
-    SignupAndOpenVirtualAccount,
+    SignupAndOpenWallet,
     VerifyEmail,
     Login,
     SetTransactionPin,
@@ -9,13 +9,13 @@ from .views import (
     ResetPassword,
     TransferFundsView,
     VerifyAccountView,
-    GetAccountBalance,
+    WalletEnquiryView,
     PaymentWebhookView,
-    BanksListView,
+    WAASBanksView,
 )
 
 urlpatterns = [
-    path("signup/", SignupAndOpenVirtualAccount.as_view(), name="signup"),
+    path("signup/", SignupAndOpenWallet.as_view(), name="signup"),
     path("verify-email/", VerifyEmail.as_view(), name="verify_email"),
     path("login/", Login.as_view(), name="login"),
     path("set-pin/", SetTransactionPin.as_view(), name="set_pin"),
@@ -23,7 +23,7 @@ urlpatterns = [
     path("reset-password/", ResetPassword.as_view(), name="reset_password"),
     path("transfer-funds/", TransferFundsView.as_view(), name="transfer_funds"),
     path("verify-account/", VerifyAccountView.as_view(), name="verify_account"),
-    path("get-balance/", GetAccountBalance.as_view(), name="get_balance"),
+    path("get-balance/", WalletEnquiryView.as_view(), name="get_balance"),
     path("webhook/payment/", PaymentWebhookView.as_view(), name="payment_webhook"),
-    path("banks/", BanksListView.as_view(), name="banks-list"),
+    path("banks/", WAASBanksView.as_view(), name="banks-list"),
 ]

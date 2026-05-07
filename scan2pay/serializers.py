@@ -22,3 +22,12 @@ class Scan2PayTransactionSerializer(serializers.ModelSerializer):
         model = Scan2PayTransaction
         fields = "__all__"
         read_only_fields = ["reference_id", "status", "created_at", "vendor"]
+
+        
+
+class Scan2PayCheckoutSerializer(serializers.Serializer):
+    qr_id = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    full_name = serializers.CharField()
+    email = serializers.EmailField()
+    transaction_pin = serializers.CharField()

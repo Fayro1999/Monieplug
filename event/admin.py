@@ -14,8 +14,6 @@ class EventAdmin(admin.ModelAdmin):
         "date",
         "location",
         "organizer",
-        "bank_name",
-        "account_number",
         "created_at",
     )
     list_filter = ("date", "created_at")
@@ -40,16 +38,22 @@ class TicketPurchaseAdmin(admin.ModelAdmin):
         "ticket",
         "copies",
         "total_price",
-        "paystack_reference",
+        "status",
+        "debit_reference",
+        "credit_reference",
         "created_at",
     )
-    list_filter = ("created_at",)
+
+    list_filter = ("status", "created_at")
+
     search_fields = (
         "full_name",
         "email",
-        "paystack_reference",
         "reference_id",
+        "debit_reference",
+        "credit_reference",
     )
+
     readonly_fields = (
         "reference_id",
         "total_price",
@@ -71,9 +75,9 @@ class TicketPurchaseAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Payment Info",
+            "WAAS Transaction Info",
             {
-                "fields": ("paystack_reference", "reference_id"),
+                "fields": ("status", "debit_reference", "credit_reference", "reference_id"),
             },
         ),
         (
@@ -89,4 +93,3 @@ class TicketPurchaseAdmin(admin.ModelAdmin):
             },
         ),
     )
-

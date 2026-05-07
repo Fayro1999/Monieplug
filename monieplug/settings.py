@@ -108,7 +108,7 @@ DATABASES = {
 
 DATABASES = {
     'default': dj_database_url.config(
-        default='postgresql://monieplug_ydqs_user:Gc1HRLNNAhMMNC7sk8Wp6StYwtMFagaS@dpg-d4q2u32li9vc739mekf0-a.oregon-postgres.render.com/monieplug_ydqs',
+        default='postgresql://monieplug_6cym_user:1F3YhJFVrqX7hDKUp60BE0dKs38Qo0I7@dpg-d7rgj7jrjlhs73fobaqg-a.oregon-postgres.render.com/monieplug_6cym',
         conn_max_age=600,
         ssl_require=True   # 👈 This line forces SSL
     )
@@ -167,6 +167,18 @@ EMAIL_USE_TLS = True #False
 EMAIL_HOST_USER = 'monieplug.eservice@gmail.com'
 EMAIL_HOST_PASSWORD = 'wwpi erqo nyla ncda'  # App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+
+WAAS_USERNAME = "schoolplug"
+WAAS_PASSWORD = "VEesTOieG2LlGymWSL57Ffr6lUtm89EV8ZhI3VRQJoP5nZuEwD"
+WAAS_CLIENT_ID = "waas"
+WAAS_CLIENT_SECRET = "cRAwnWElcNMUZpALdnlve6PubUkCPOQR"
+
+
+WEBHOOK_USERNAME = "monieplug_webhook"
+WEBHOOK_PASSWORD = "veryStrongSecret123"
+
+
 
 
 

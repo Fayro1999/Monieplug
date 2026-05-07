@@ -3,18 +3,26 @@ from rest_framework import serializers
 
 
 class SignupSerializer(serializers.Serializer):
-    first_name = serializers.CharField()
-    last_name = serializers.CharField()
-    phone = serializers.CharField()
+    first_name = serializers.CharField(max_length=50)
+    last_name = serializers.CharField(max_length=50)
+    phone = serializers.CharField(max_length=20)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    dob = serializers.DateField()
-    gender = serializers.CharField()
-    address1 = serializers.CharField()
-    city = serializers.CharField()
-    state = serializers.CharField()
-    country = serializers.CharField()
+    date_of_birth = serializers.DateField(format="%d/%m/%Y", input_formats=["%d/%m/%Y", "%Y-%m-%d"])
+    gender = serializers.ChoiceField(choices=[("0", "Male"), ("1", "Female")])
+    address = serializers.CharField(max_length=200)
+    city = serializers.CharField(max_length=100)
+    state = serializers.CharField(max_length=100)
+    country = serializers.CharField(max_length=100)
 
+    # Optional fields for WAAS wallet
+    nin_user_id = serializers.CharField(max_length=11, required=False, allow_blank=True)
+    bvn = serializers.CharField(max_length=11, required=False, allow_blank=True)
+    next_of_kin_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    next_of_kin_phone = serializers.CharField(max_length=15, required=False, allow_blank=True)
+    referral_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    referral_phone = serializers.CharField(max_length=15, required=False, allow_blank=True)
+    email_verification_code = serializers.CharField(max_length=6, read_only=True)
 
 class VerifyEmailSerializer(serializers.Serializer):
     code = serializers.CharField()

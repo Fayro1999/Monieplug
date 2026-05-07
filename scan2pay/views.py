@@ -9,7 +9,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema
 from .models import VendorQRCode, Scan2PayTransaction
-from .serializers import VendorQRCodeSerializer, Scan2PayTransactionSerializer
+from .serializers import VendorQRCodeSerializer, Scan2PayTransactionSerializer, Scan2PayCheckoutSerializer
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 ROVA_API_BASE_URL = "https://baas.dev.getrova.co.uk"
 PLATFORM_ACCOUNT_NUMBER = "4000005778"
@@ -54,13 +55,67 @@ class VendorQRCodeCreateView(APIView):
             return Response({"message": "QR Code created", "qr_code_url": qr.qr_code_image.url})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Registered user checkout
+import uuid
+import requests
+from decimal import Decimal, InvalidOperation
+from django.conf import settings
+from django.contrib.auth.hashers import check_password
+from django.core.mail import EmailMessage
+from django.db import transaction
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+
 class Scan2PayCheckoutView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(exclude=True)
+    # 🔐 WAAS TOKEN
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            return resp.json().get("accessToken")
+        except Exception:
+            return None
+
+    # 💳 WAAS TRANSFER CORE
+    def waas_transfer(self, url, token, payload):
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        return response.json()
+
+    # =========================
+    # ✅ SWAGGER GOES HERE
+    # =========================
+    @extend_schema(
+        summary="Scan2Pay Checkout Payment",
+        description="Debits customer wallet and credits vendor wallet via WAAS",
+        request=Scan2PayCheckoutSerializer,
+        responses={
+            200: OpenApiResponse(description="Payment successful"),
+            400: OpenApiResponse(description="Payment failed"),
+            403: OpenApiResponse(description="Invalid PIN"),
+            500: OpenApiResponse(description="Server error"),
+        },
+    )
     def post(self, request):
+
         data = request.data
+
         qr_id = data.get("qr_id")
         amount = data.get("amount")
         full_name = data.get("full_name")
@@ -71,6 +126,7 @@ class Scan2PayCheckoutView(APIView):
 
         if not user.transaction_pin:
             return Response({"error": "Transaction PIN not set"}, status=403)
+
         if not check_password(transaction_pin, user.transaction_pin):
             return Response({"error": "Invalid transaction PIN"}, status=403)
 
@@ -79,63 +135,79 @@ class Scan2PayCheckoutView(APIView):
         except VendorQRCode.DoesNotExist:
             return Response({"error": "Invalid QR code"}, status=404)
 
-        if qr_code.amount:
-            amount = Decimal(qr_code.amount)
-        else:
-            amount = Decimal(amount)
+        try:
+            amount = Decimal(qr_code.amount if qr_code.amount else amount)
+        except (InvalidOperation, TypeError):
+            return Response({"error": "Invalid amount"}, status=400)
+
+        if amount <= 0:
+            return Response({"error": "Amount must be greater than 0"}, status=400)
 
         platform_charge = calculate_platform_charge(amount)
         vendor_amount = amount - platform_charge
 
-        narration = f"Scan2Pay-{qr_code.qr_label}"[:20]
-        buyer_transfer = rova_transfer(
-            destination_account=PLATFORM_ACCOUNT_NUMBER,
-            destination_bank_code=PLATFORM_BANK_CODE,
-            amount=amount,
-            narration=narration,
-        )
-        if buyer_transfer.get("status") != "SUCCESS" or buyer_transfer["data"].get("status") != "SUCCESSFUL":
-            return Response({"error": "Failed to debit user", "details": buyer_transfer}, status=400)
+        token = self.get_waas_token()
+        if not token:
+            return Response({"error": "WAAS authentication failed"}, status=500)
 
-        vendor_transfer = rova_transfer(
-            destination_account=qr_code.vendor.virtual_account_number,
-            destination_bank_code="214001",
-            amount=vendor_amount,
-            narration=f"Payout-{qr_code.qr_label}"[:20],
-        )
-        if vendor_transfer.get("status") != "SUCCESS" or vendor_transfer["data"].get("status") != "SUCCESSFUL":
-            return Response({"error": "Vendor payout failed", "details": vendor_transfer}, status=400)
+        transaction_id = str(uuid.uuid4()).replace("-", "")[:25]
 
-        tx = Scan2PayTransaction.objects.create(
-            sender=user,
-            vendor=qr_code.vendor,
-            qr_code=qr_code,
-            amount=amount,
-            platform_charge=platform_charge,
-            status="SUCCESS"
-        )
+        narration = f"Scan2Pay-{qr_code.qr_label}"[:100]
 
-        email_subject = f"Your Payment Receipt - {qr_code.qr_label}"
-        email_body = f"""
-Hello {full_name},
+        merchant = {
+            "merchantFeeAccount": PLATFORM_ACCOUNT_NUMBER,
+            "merchantFeeAmount": "0",
+            "isFee": False
+        }
 
-✅ Payment Successful!
+        try:
+            with transaction.atomic():
 
-Business: {qr_code.business_name}
-Amount Paid: ₦{amount}
-Platform Charge: ₦{platform_charge}
-Vendor Receives: ₦{vendor_amount}
+                debit_payload = {
+                    "accountNo": user.wallet_account_number,
+                    "totalAmount": str(amount),
+                    "transactionId": transaction_id,
+                    "narration": narration,
+                    "merchant": merchant
+                }
 
-Reference ID: {tx.reference_id}
+                debit_url = "http://102.216.128.75:9090/waas/api/v1/debit/transfer"
+                debit_response = self.waas_transfer(debit_url, token, debit_payload)
 
-Thank you for using Scan2Pay!
-"""
-        email_msg = EmailMessage(subject=email_subject, body=email_body, from_email=settings.DEFAULT_FROM_EMAIL, to=[email])
-        email_msg.send(fail_silently=True)
+                if debit_response.get("status", "").upper() != "SUCCESS":
+                    return Response({"error": "Wallet debit failed", "details": debit_response}, status=400)
 
-        serializer = Scan2PayTransactionSerializer(tx)
-        return Response({"message": "Payment completed successfully", "transaction": serializer.data})
+                credit_payload = {
+                    "accountNo": qr_code.vendor.wallet_account_number,
+                    "totalAmount": str(vendor_amount),
+                    "transactionId": transaction_id + "V",
+                    "narration": f"Payout-{qr_code.qr_label}"[:100],
+                    "merchant": merchant
+                }
 
+                credit_url = "http://102.216.128.75:9090/waas/api/v1/credit/transfer"
+                credit_response = self.waas_transfer(credit_url, token, credit_payload)
+
+                if credit_response.get("status", "").upper() != "SUCCESS":
+                    return Response({"error": "Vendor credit failed", "details": credit_response}, status=400)
+
+                Scan2PayTransaction.objects.create(
+                    sender=user,
+                    vendor=qr_code.vendor,
+                    qr_code=qr_code,
+                    amount=amount,
+                    platform_charge=platform_charge,
+                    status="SUCCESS",
+                    reference_id=transaction_id
+                )
+
+        except Exception as e:
+            return Response({"error": "Transaction failed", "message": str(e)}, status=500)
+
+        return Response({
+            "message": "Payment successful",
+            "reference_id": transaction_id
+        }, status=200)
 # Unregistered user
 class Scan2PayUnregisteredView(APIView):
     def post(self, request):

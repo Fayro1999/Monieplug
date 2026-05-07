@@ -15,27 +15,32 @@ class UserManager(BaseUserManager):
         user.set_password(password)
         user.save(using=self._db)
         return user
-    
+
     def create_superuser(self, email, phone, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_active", True)
         return self.create_user(email, phone, password, **extra_fields)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # 🔹 Personal info
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=20, unique=True)
 
-    is_active = models.BooleanField(default=False)  # Becomes True after email verification
+    # 🔹 Status flags
+    is_active = models.BooleanField(default=False)  # True after email verification
     is_staff = models.BooleanField(default=False)
 
-    # 🏦 Rova BaaS virtual account info
-    virtual_account_number = models.CharField(max_length=20, blank=True, null=True)
-    virtual_account_name = models.CharField(max_length=100, blank=True, null=True)
-    bank_name = models.CharField(max_length=100, blank=True, null=True, default="Rova BaaS")
+    # 🏦 WAAS wallet info
+    wallet_id = models.CharField(max_length=50, blank=True, null=True)
+    wallet_account_number = models.CharField(max_length=20, blank=True, null=True)
+    wallet_name = models.CharField(max_length=100, blank=True, null=True)
+    wallet_bank_name = models.CharField(max_length=100, blank=True, null=True, default="WAAS")
 
     # 🔐 Security
     transaction_pin = models.CharField(max_length=128, blank=True, null=True)  # hashed pin
@@ -48,4 +53,3 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
-
