@@ -208,6 +208,7 @@ class Scan2PayCheckoutView(APIView):
             "message": "Payment successful",
             "reference_id": transaction_id
         }, status=200)
+        
 # Unregistered user
 class Scan2PayUnregisteredView(APIView):
     def post(self, request):
