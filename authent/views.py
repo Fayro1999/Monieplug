@@ -16,6 +16,7 @@ from Crypto.Cipher import AES
 from django.contrib.auth.hashers import make_password, check_password
 
 import base64
+import threading
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes,  OpenApiParameter
 #from drf_spectacular.utils import extend_schema, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
@@ -162,7 +163,10 @@ class SignupAndOpenWallet(APIView):
             f"Thanks."
         )
         try:
-            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
+            def send_email():
+                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
+            threading.Thread(target=send_email).start()
+            #send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
         except Exception as e:
             print("Email error:", e)
 
