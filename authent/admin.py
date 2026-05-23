@@ -25,12 +25,13 @@ class UserAdmin(BaseUserAdmin):
         (None, {"fields": ("email", "phone", "password")}),
         ("Personal Info", {"fields": ("first_name", "last_name")}),
         (
-            "Virtual Account",
+            "Wallet Information",
             {
                 "fields": (
-                    "virtual_account_number",
-                    "virtual_account_name",
-                    "bank_name",
+                    "wallet_id",
+                    "wallet_account_number",
+                    "wallet_name",
+                    "wallet_bank_name",
                 )
             },
         ),

@@ -25,7 +25,8 @@ from .serializers import (
     SignupSerializer, VerifyEmailSerializer, LoginSerializer,
     SetTransactionPinSerializer, ForgotPasswordSerializer,
     ResetPasswordSerializer, TransferFundsSerializer,
-    VerifyAccountSerializer, GetAccountBalanceSerializer
+    VerifyAccountSerializer, WalletEnquiryResponseSerializer, UserSerializer
+
 )
 
 User = get_user_model()
@@ -164,12 +165,14 @@ class SignupAndOpenWallet(APIView):
         )
         try:
             def send_email():
-                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
+                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
             threading.Thread(target=send_email).start()
             #send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
         except Exception as e:
-            print("Email error:", e)
-
+            return Response({
+                "error": "Email sending failed",
+                "details": str(e)
+            }, status=500)
         # 8️⃣ Return response
         return Response({
             "message": "Account created successfully. Please verify email.",
@@ -543,10 +546,9 @@ class VerifyAccountView(APIView):
 
 
 
+from .serializers import GetBalanceSerializer, WalletEnquiryResponseSerializer
+
 class WalletEnquiryView(APIView):
-    """
-    Fetch wallet details using WAAS wallet enquiry API
-    """
     permission_classes = [IsAuthenticated]
 
     def get_waas_token(self):
@@ -566,26 +568,28 @@ class WalletEnquiryView(APIView):
         except Exception:
             return None
 
+    @extend_schema(
+        request=GetBalanceSerializer,   # 🔥 FIX HERE
+        responses=WalletEnquiryResponseSerializer
+    )
     def post(self, request):
 
         account_no = request.data.get("accountNo")
 
         if not account_no:
             return Response(
-                {"error": "accountNo is required"},
+                {"status": "FAILED", "message": "accountNo is required"},
                 status=400
             )
 
-        # 🔐 STEP 1: Get WAAS token
         token = self.get_waas_token()
 
         if not token:
             return Response(
-                {"error": "Failed to authenticate with WAAS"},
+                {"status": "FAILED", "message": "Failed to authenticate with WAAS"},
                 status=500
             )
 
-        # 🔐 STEP 2: Call wallet enquiry WITH token
         url = "http://102.216.128.75:9090/waas/api/v1/wallet_enquiry"
 
         headers = {
@@ -593,9 +597,7 @@ class WalletEnquiryView(APIView):
             "Content-Type": "application/json"
         }
 
-        payload = {
-            "accountNo": str(account_no)
-        }
+        payload = {"accountNo": str(account_no)}
 
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -606,14 +608,14 @@ class WalletEnquiryView(APIView):
                     {
                         "status": data.get("status"),
                         "message": data.get("message"),
-                        "data": data.get("data")
+                        "account": data.get("data")
                     },
                     status=400
                 )
 
             return Response(
                 {
-                    "status": data.get("status"),
+                    "status": "SUCCESS",
                     "message": data.get("message"),
                     "account": data.get("data")
                 },
@@ -624,14 +626,10 @@ class WalletEnquiryView(APIView):
             return Response(
                 {
                     "status": "FAILED",
-                    "message": f"Network error: {str(e)}"
+                    "message": str(e)
                 },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
+                status=503
             )
-
-
-
-        
 
 
 
@@ -924,3 +922,37 @@ class WAASBanksView(APIView):
                 },
                 status=500
             )
+
+
+
+
+
+  #from rest_framework.permissions import IsAuthenticated
+#from .serializers import UserSerializer
+
+
+class GetUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get(self, request):
+        users = User.objects.all().order_by("-id")
+        serializer = UserSerializer(users, many=True)
+        return Response(serializer.data, status=200)
+
+
+class GetSingleUserView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get(self, request, id):
+        try:
+            user = User.objects.get(id=id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found"},
+                status=404
+            )
+
+        serializer = UserSerializer(user)
+        return Response(serializer.data, status=200)          

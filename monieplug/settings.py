@@ -177,7 +177,7 @@ EMAIL_USE_TLS = True #False
 EMAIL_HOST_USER = 'monieplug.eservice@gmail.com'
 EMAIL_HOST_PASSWORD = 'wwpi erqo nyla ncda'  # App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-EMAIL_TIMEOUT = 10
+EMAIL_TIMEOUT = 60
 
 
 WAAS_USERNAME = "schoolplug"

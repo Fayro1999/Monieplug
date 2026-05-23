@@ -12,6 +12,8 @@ from .views import (
     WalletEnquiryView,
     PaymentWebhookView,
     WAASBanksView,
+    GetUsersView,
+    GetSingleUserView,
 )
 
 urlpatterns = [
@@ -26,4 +28,6 @@ urlpatterns = [
     path("get-balance/", WalletEnquiryView.as_view(), name="get_balance"),
     path("webhook/payment/", PaymentWebhookView.as_view(), name="payment_webhook"),
     path("banks/", WAASBanksView.as_view(), name="banks-list"),
+    path("users/", GetUsersView.as_view(), name="get-users"),
+    path("users/<uuid:id>/",GetSingleUserView.as_view(), name="get-user"),
 ]

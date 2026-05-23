@@ -1,5 +1,6 @@
 # authent/serializers.py
 from rest_framework import serializers
+from .models import User
 
 
 class SignupSerializer(serializers.Serializer):
@@ -60,10 +61,29 @@ class VerifyAccountSerializer(serializers.Serializer):
     bank_code = serializers.CharField()
 
 
-class GetAccountBalanceSerializer(serializers.Serializer):
-    account_number = serializers.CharField()
-    customer_ref = serializers.CharField()
-    first_name = serializers.CharField(required=False)
-    last_name = serializers.CharField(required=False)
-    email = serializers.EmailField(required=False)
-    mobile_no = serializers.CharField(required=False)
+class WalletEnquiryResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField()
+    account = serializers.JSONField()
+
+class GetBalanceSerializer(serializers.Serializer):
+    accountNo = serializers.CharField()
+
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "wallet_id",
+            "wallet_account_number",
+            "wallet_name",
+            "wallet_bank_name",
+            "is_active",
+            "is_staff",
+        ]
