@@ -87,3 +87,34 @@ class UserSerializer(serializers.ModelSerializer):
             "is_active",
             "is_staff",
         ]
+
+
+
+
+
+class WalletTransactionHistorySerializer(serializers.Serializer):
+    accountNumber = serializers.CharField()
+    fromDate = serializers.CharField()
+    toDate = serializers.CharField()
+    numberOfItems = serializers.CharField()
+
+
+class WalletTransactionHistoryResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField()
+    data = serializers.JSONField()
+
+
+class OtherBankCustomerSerializer(serializers.Serializer):
+    accountNumber = serializers.CharField()
+    bankCode = serializers.CharField()
+
+
+class OtherBankEnquirySerializer(serializers.Serializer):
+    customer = OtherBankCustomerSerializer()
+
+
+class OtherBankEnquiryResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField()
+    data = serializers.JSONField()

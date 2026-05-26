@@ -5,40 +5,105 @@ from django.core.files.base import ContentFile
 
 User = get_user_model()
 
+
 class VendorQRCode(models.Model):
     vendor = models.ForeignKey(User, on_delete=models.CASCADE)
     business_name = models.CharField(max_length=255)
     business_address = models.CharField(max_length=255)
-    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
     description = models.TextField(blank=True, null=True)
     qr_label = models.CharField(max_length=50)
-    payment_variation = models.JSONField(blank=True, null=True)  # ["Service", "Product"]
-    qr_code_image = models.ImageField(upload_to="scan2pay/qrcodes/")
+
+    payment_variation = models.JSONField(
+        blank=True,
+        null=True
+    )  # ["Service", "Product"]
+
+    qr_code_image = models.ImageField(
+        upload_to="scan2pay/qrcodes/",
+        blank=True,
+        null=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        if not self.qr_code_image:
-            qr_data = f"{self.vendor.id}|{self.amount}|{self.qr_label}"
+        creating = self.pk is None
+        super().save(*args, **kwargs)
+
+        # Generate QR only on creation
+        if creating or not self.qr_code_image:
+
+            # ✅ IMPORTANT: QR now contains ONLY a resolvable backend URL
+            qr_data = f"https://yourapi.com/api/scan2pay/checkout/{self.id}/"
+
             qr = qrcode.make(qr_data)
+
             buffer = io.BytesIO()
             qr.save(buffer, format="PNG")
+
             filename = f"{uuid.uuid4()}.png"
-            self.qr_code_image.save(filename, ContentFile(buffer.getvalue()), save=False)
-        super().save(*args, **kwargs)
+
+            self.qr_code_image.save(
+                filename,
+                ContentFile(buffer.getvalue()),
+                save=False
+            )
+
+            super().save(update_fields=["qr_code_image"])
 
 
 class Scan2PayTransaction(models.Model):
-    sender = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
-    vendor = models.ForeignKey(User, on_delete=models.CASCADE, related_name="scan2pay_received")
-    qr_code = models.ForeignKey(VendorQRCode, on_delete=models.SET_NULL, null=True)
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+
+    vendor = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="scan2pay_received"
+    )
+
+    qr_code = models.ForeignKey(
+        VendorQRCode,
+        on_delete=models.SET_NULL,
+        null=True
+    )
+
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    platform_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    reference_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
-    status = models.CharField(max_length=20, choices=[
-        ("PENDING","Pending"),
-        ("SUCCESS","Success"),
-        ("FAILED","Failed")
-    ], default="PENDING")
+
+    platform_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0
+    )
+
+    reference_id = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ("PENDING", "Pending"),
+            ("SUCCESS", "Success"),
+            ("FAILED", "Failed")
+        ],
+        default="PENDING"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

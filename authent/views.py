@@ -25,7 +25,9 @@ from .serializers import (
     SignupSerializer, VerifyEmailSerializer, LoginSerializer,
     SetTransactionPinSerializer, ForgotPasswordSerializer,
     ResetPasswordSerializer, TransferFundsSerializer,
-    VerifyAccountSerializer, WalletEnquiryResponseSerializer, UserSerializer
+    VerifyAccountSerializer, WalletEnquiryResponseSerializer, UserSerializer,
+    WalletTransactionHistorySerializer, WalletTransactionHistoryResponseSerializer,
+    OtherBankEnquirySerializer, OtherBankEnquiryResponseSerializer
 
 )
 
@@ -448,7 +450,7 @@ class TransferFundsView(APIView):
     "transaction": {
         "reference": short_ref
     },
-    "transactionType": "OTHER_BANKS"
+    "transactionType": "INTRA_BANK"
 }
 
         headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
@@ -788,13 +790,23 @@ from rest_framework.response import Response
 from rest_framework import status
 
 
+import json
+import requests
+
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+
+
 class WAASBanksView(APIView):
     """
     Fetch list of banks from WAAS API
     """
+    permission_classes = [IsAuthenticated]
 
     def get_waas_token(self):
-        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+        auth_url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
 
         payload = {
             "username": settings.WAAS_USERNAME,
@@ -804,12 +816,16 @@ class WAASBanksView(APIView):
         }
 
         try:
-            resp = requests.post(url, json=payload, timeout=30)
+            response = requests.post(
+                auth_url,
+                json=payload,
+                timeout=30
+            )
 
             try:
-                data = resp.json()
+                data = response.json()
             except ValueError:
-                data = json.loads(resp.text)
+                data = json.loads(response.text)
 
             return data.get("accessToken")
 
@@ -818,7 +834,7 @@ class WAASBanksView(APIView):
 
     def get(self, request):
 
-        # 🔐 STEP 1: TOKEN
+        # STEP 1: Authenticate with WAAS
         token = self.get_waas_token()
 
         if not token:
@@ -831,7 +847,8 @@ class WAASBanksView(APIView):
                 status=500
             )
 
-        url = "http://102.216.128.75:9090/waas/api/v1/get_banks"
+        # STEP 2: Fetch banks
+        banks_url = "http://102.216.128.75:9090/waas/api/v1/get_banks"
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -839,15 +856,19 @@ class WAASBanksView(APIView):
         }
 
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(
+                banks_url,
+                headers=headers,
+                timeout=30
+            )
 
-            # 🔥 SAFE PARSE
+            # SAFE JSON PARSE
             try:
                 data = response.json()
             except ValueError:
                 data = json.loads(response.text)
 
-            # WAAS must succeed
+            # STEP 3: Validate WAAS response
             if str(data.get("status", "")).upper() != "SUCCESS":
                 return Response(
                     {
@@ -858,46 +879,41 @@ class WAASBanksView(APIView):
                     status=400
                 )
 
-            # 🔥 SMART EXTRACTION (FIX FOR YOUR ERROR)
+            # STEP 4: Extract bank list correctly
             raw_banks = (
-                data.get("bankList") or
-                (data.get("data", {}) if isinstance(data.get("data"), dict) else None) or
-                data.get("data")
+                data.get("data", {}).get("bankList", [])
             )
 
-            # If still string → decode
-            if isinstance(raw_banks, str):
-                try:
-                    raw_banks = json.loads(raw_banks)
-                except:
-                    raw_banks = None
-
-            # Final safety check
+            # FINAL SAFETY CHECK
             if not isinstance(raw_banks, list):
                 return Response(
                     {
                         "status": "FAILED",
-                        "message": "WAAS returned unexpected bank format",
-                        "raw_data": data
+                        "message": "Invalid bank list format",
+                        "banks": []
                     },
                     status=500
                 )
 
-            # 🔥 CLEAN OUTPUT
+            # STEP 5: Clean bank data
             banks = [
                 {
-                    "name": (b.get("bankName") or "").strip(),
-                    "code": (b.get("bankCode") or "").strip(),
-                    "nibss_code": (b.get("nibssBankCode") or "").strip(),
+                    "name": (bank.get("bankName") or "").strip(),
+                    "code": (bank.get("bankCode") or "").strip(),
+                    "nibss_code": (bank.get("nibssBankCode") or "").strip(),
                 }
-                for b in raw_banks
-                if isinstance(b, dict)
+                for bank in raw_banks
+                if isinstance(bank, dict)
             ]
 
+            # STEP 6: Success response
             return Response(
                 {
                     "status": "SUCCESS",
-                    "message": data.get("message", "Success"),
+                    "message": data.get(
+                        "message",
+                        "Banks fetched successfully"
+                    ),
                     "banks": banks
                 },
                 status=200
@@ -955,4 +971,162 @@ class GetSingleUserView(APIView):
             )
 
         serializer = UserSerializer(user)
-        return Response(serializer.data, status=200)          
+        return Response(serializer.data, status=200) 
+
+
+
+
+
+class WalletTransactionHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            return resp.json().get("accessToken")
+        except Exception:
+            return None
+
+    @extend_schema(
+        request=WalletTransactionHistorySerializer,
+        responses=WalletTransactionHistoryResponseSerializer
+    )
+    def post(self, request):
+
+        accountNumber = request.data.get("accountNumber")
+        fromDate = request.data.get("fromDate")
+        toDate = request.data.get("toDate")
+        numberOfItems = request.data.get("numberOfItems")
+
+        # validation
+        if not all([accountNumber, fromDate, toDate, numberOfItems]):
+            return Response({
+                "status": "FAILED",
+                "message": "All fields are required"
+            }, status=400)
+
+        token = self.get_waas_token()
+
+        if not token:
+            return Response({
+                "status": "FAILED",
+                "message": "Authentication failed"
+            }, status=500)
+
+        url = "http://102.216.128.75:9090/waas/api/v1/wallet_transactions"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "accountNumber": accountNumber,
+            "fromDate": fromDate,
+            "toDate": toDate,
+            "numberOfItems": numberOfItems
+        }
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            data = resp.json()
+
+            if data.get("status", "").upper() != "SUCCESS":
+                return Response({
+                    "status": data.get("status"),
+                    "message": data.get("message"),
+                    "data": data.get("data")
+                }, status=400)
+
+            return Response({
+                "status": "SUCCESS",
+                "message": data.get("message"),
+                "data": data.get("data")
+            }, status=200)
+
+        except requests.exceptions.RequestException as e:
+            return Response({
+                "status": "FAILED",
+                "message": str(e)
+            }, status=503)        
+
+
+
+class OtherBankAccountEnquiryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            return resp.json().get("accessToken")
+        except Exception:
+            return None
+
+    @extend_schema(
+        request=OtherBankEnquirySerializer,
+        responses=OtherBankEnquiryResponseSerializer
+    )
+    def post(self, request):
+
+        serializer = OtherBankEnquirySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        customer_data = serializer.validated_data["customer"]
+
+        # 1. Get WAAS token
+        token = self.get_waas_token()
+
+        if not token:
+            return Response({
+                "status": "FAILED",
+                "message": "Authentication failed",
+                "data": None
+            }, status=500)
+
+        # 2. WAAS endpoint
+        url = "http://102.216.128.75:9090/waas/api/v1/other_banks_enquiry"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "customer": customer_data
+        }
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            data = resp.json()
+
+            # 3. Handle WAAS response
+            return Response({
+                "status": data.get("status"),
+                "message": data.get("message"),
+                "data": data.get("data")
+            }, status=200 if data.get("status") == "SUCCESS" else 400)
+
+        except requests.exceptions.RequestException as e:
+            return Response({
+                "status": "FAILED",
+                "message": str(e),
+                "data": None
+            }, status=503)

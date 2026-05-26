@@ -14,6 +14,8 @@ from .views import (
     WAASBanksView,
     GetUsersView,
     GetSingleUserView,
+    WalletTransactionHistoryView,
+    OtherBankAccountEnquiryView,
 )
 
 urlpatterns = [
@@ -30,4 +32,6 @@ urlpatterns = [
     path("banks/", WAASBanksView.as_view(), name="banks-list"),
     path("users/", GetUsersView.as_view(), name="get-users"),
     path("users/<uuid:id>/",GetSingleUserView.as_view(), name="get-user"),
+    path("transaction-history/",WalletTransactionHistoryView.as_view(), name="transaction-history"),
+    path("other-bank-enquiry/",OtherBankAccountEnquiryView.as_view(), name="other-bank-enquiry"),
 ]

@@ -52,26 +52,56 @@ class VendorQRCodeCreateView(APIView):
         serializer = VendorQRCodeSerializer(data=data, context={"request": request})
         if serializer.is_valid():
             qr = serializer.save()
-            return Response({"message": "QR Code created", "qr_code_url": qr.qr_code_image.url})
+            return Response({
+                "message": "QR Code created",
+             "qr_code_url": qr.qr_code_image.url,
+             "qr_id": qr.id,
+             "vendor_id": qr.vendor.id,
+            "business_name": qr.business_name,
+            "amount": qr.amount})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+
+from decimal import Decimal, InvalidOperation
 import uuid
 import requests
-from decimal import Decimal, InvalidOperation
+
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
-from django.core.mail import EmailMessage
 from django.db import transaction
+
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework import status
 
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
+from .models import VendorQRCode, Scan2PayTransaction
+from .serializers import Scan2PayCheckoutSerializer
+
+
+# ================================
+# PLATFORM CHARGE
+# ================================
+def calculate_platform_charge(amount):
+    if amount < 10000:
+        return Decimal("150")
+    elif amount < 500000:
+        return Decimal("200")
+    return Decimal("250")
+
+
+# ================================
+# SCAN2PAY CHECKOUT
+# ================================
 class Scan2PayCheckoutView(APIView):
     permission_classes = [IsAuthenticated]
 
-    # 🔐 WAAS TOKEN
+    # =================================
+    # WAAS AUTH
+    # =================================
     def get_waas_token(self):
         url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
 
@@ -88,125 +118,205 @@ class Scan2PayCheckoutView(APIView):
         except Exception:
             return None
 
-    # 💳 WAAS TRANSFER CORE
+    # =================================
+    # WAAS CALL
+    # =================================
     def waas_transfer(self, url, token, payload):
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
 
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        return response.json()
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            return response.json()
+        except Exception as e:
+            return {"status": "FAILED", "message": str(e)}
 
-    # =========================
-    # ✅ SWAGGER GOES HERE
-    # =========================
+    # =================================
+    # CHECKOUT
+    # =================================
     @extend_schema(
         summary="Scan2Pay Checkout Payment",
-        description="Debits customer wallet and credits vendor wallet via WAAS",
+        description="Customer pays via wallet_other_banks → platform settles vendor",
         request=Scan2PayCheckoutSerializer,
         responses={
             200: OpenApiResponse(description="Payment successful"),
             400: OpenApiResponse(description="Payment failed"),
             403: OpenApiResponse(description="Invalid PIN"),
+            404: OpenApiResponse(description="QR not found"),
             500: OpenApiResponse(description="Server error"),
         },
     )
-    def post(self, request):
-
-        data = request.data
-
-        qr_id = data.get("qr_id")
-        amount = data.get("amount")
-        full_name = data.get("full_name")
-        email = data.get("email")
-        transaction_pin = data.get("transaction_pin")
+    def post(self, request, qr_id):
 
         user = request.user
+        data = request.data
 
+        amount_input = data.get("amount")
+        transaction_pin = data.get("transaction_pin")
+
+        # =================================
+        # PIN VALIDATION
+        # =================================
         if not user.transaction_pin:
             return Response({"error": "Transaction PIN not set"}, status=403)
 
         if not check_password(transaction_pin, user.transaction_pin):
             return Response({"error": "Invalid transaction PIN"}, status=403)
 
+        # =================================
+        # GET QR
+        # =================================
         try:
             qr_code = VendorQRCode.objects.get(id=qr_id)
         except VendorQRCode.DoesNotExist:
             return Response({"error": "Invalid QR code"}, status=404)
 
+        # =================================
+        # AMOUNT HANDLING (HYBRID SAFE)
+        # =================================
         try:
-            amount = Decimal(qr_code.amount if qr_code.amount else amount)
+            if qr_code.amount:
+                amount = Decimal(qr_code.amount)
+            else:
+                amount = Decimal(amount_input)
+
+            if amount <= 0:
+                return Response({"error": "Invalid amount"}, status=400)
+
         except (InvalidOperation, TypeError):
-            return Response({"error": "Invalid amount"}, status=400)
+            return Response({"error": "Invalid amount format"}, status=400)
 
-        if amount <= 0:
-            return Response({"error": "Amount must be greater than 0"}, status=400)
-
+        # =================================
+        # PLATFORM CHARGE
+        # =================================
         platform_charge = calculate_platform_charge(amount)
         vendor_amount = amount - platform_charge
 
+        if vendor_amount <= 0:
+            return Response({"error": "Invalid settlement amount"}, status=400)
+
+        # =================================
+        # WAAS TOKEN
+        # =================================
         token = self.get_waas_token()
         if not token:
             return Response({"error": "WAAS authentication failed"}, status=500)
 
         transaction_id = str(uuid.uuid4()).replace("-", "")[:25]
-
         narration = f"Scan2Pay-{qr_code.qr_label}"[:100]
 
-        merchant = {
-            "merchantFeeAccount": PLATFORM_ACCOUNT_NUMBER,
-            "merchantFeeAmount": "0",
-            "isFee": False
+        # =================================
+        # STEP 1: COLLECTION (Customer → Platform)
+        # wallet_other_banks
+        # =================================
+        collection_url = (
+            "http://102.216.128.75:9090/"
+            "waas/api/v1/wallet_other_banks"
+        )
+
+        collection_payload = {
+    "transaction": {
+        "reference": transaction_id
+    },
+
+    "order": {
+        "amount": str(amount),
+        "currency": "NGN",
+        "description": f"Scan2Pay payment for {qr_code.qr_label}",
+        "country": "NG"
+    },
+
+    # ✔ CUSTOMER = SENDER ONLY
+    "customer": {
+        "account": {
+            "number": user.wallet_account_number,
+            "bank": "120001",
+            "senderaccountnumber": user.wallet_account_number,
+            "name": f"{user.first_name} {user.last_name}",
+            "sendername": f"{user.first_name} {user.last_name}"
+        }
+    },
+
+    # ✔ MERCHANT / PLATFORM = RECEIVER
+    "merchant": {
+        "account": {
+            "number": settings.PLATFORM_ACCOUNT_NUMBER,
+            "bank": "120001",
+            "merchantFeeAmount": str(platform_charge),
+            
+        },
+        "isFee": True
+    },
+
+    "transactionType": "INTRA_BANK",
+    "narration": narration
+}
+        collection_response = self.waas_transfer(
+            collection_url,
+            token,
+            collection_payload
+        )
+
+        if collection_response.get("status", "").upper() != "SUCCESS":
+            return Response(
+                {
+                    "error": "Payment collection failed",
+                    "details": collection_response
+                },
+                status=400
+            )
+
+        # =================================
+        # STEP 2: SETTLEMENT (Platform → Vendor)
+        # =================================
+        settlement_url = (
+            "http://102.216.128.75:9090/"
+            "waas/api/v1/credit/transfer"
+        )
+
+        settlement_payload = {
+            "accountNo": qr_code.vendor.wallet_account_number,
+            "totalAmount": str(vendor_amount),
+            "transactionId": transaction_id + "V",
+            "narration": f"Payout-{qr_code.qr_label}"[:100],
         }
 
-        try:
-            with transaction.atomic():
+        settlement_response = self.waas_transfer(
+            settlement_url,
+            token,
+            settlement_payload
+        )
 
-                debit_payload = {
-                    "accountNo": user.wallet_account_number,
-                    "totalAmount": str(amount),
-                    "transactionId": transaction_id,
-                    "narration": narration,
-                    "merchant": merchant
-                }
+        if settlement_response.get("status", "").upper() != "SUCCESS":
+            return Response(
+                {
+                    "error": "Vendor settlement failed",
+                    "details": settlement_response
+                },
+                status=400
+            )
 
-                debit_url = "http://102.216.128.75:9090/waas/api/v1/debit/transfer"
-                debit_response = self.waas_transfer(debit_url, token, debit_payload)
-
-                if debit_response.get("status", "").upper() != "SUCCESS":
-                    return Response({"error": "Wallet debit failed", "details": debit_response}, status=400)
-
-                credit_payload = {
-                    "accountNo": qr_code.vendor.wallet_account_number,
-                    "totalAmount": str(vendor_amount),
-                    "transactionId": transaction_id + "V",
-                    "narration": f"Payout-{qr_code.qr_label}"[:100],
-                    "merchant": merchant
-                }
-
-                credit_url = "http://102.216.128.75:9090/waas/api/v1/credit/transfer"
-                credit_response = self.waas_transfer(credit_url, token, credit_payload)
-
-                if credit_response.get("status", "").upper() != "SUCCESS":
-                    return Response({"error": "Vendor credit failed", "details": credit_response}, status=400)
-
-                Scan2PayTransaction.objects.create(
-                    sender=user,
-                    vendor=qr_code.vendor,
-                    qr_code=qr_code,
-                    amount=amount,
-                    platform_charge=platform_charge,
-                    status="SUCCESS",
-                    reference_id=transaction_id
-                )
-
-        except Exception as e:
-            return Response({"error": "Transaction failed", "message": str(e)}, status=500)
+        # =================================
+        # SAVE TRANSACTION
+        # =================================
+        with transaction.atomic():
+            Scan2PayTransaction.objects.create(
+                sender=user,
+                vendor=qr_code.vendor,
+                qr_code=qr_code,
+                amount=amount,
+                platform_charge=platform_charge,
+                status="SUCCESS"
+            )
 
         return Response({
             "message": "Payment successful",
-            "reference_id": transaction_id
+            "reference_id": transaction_id,
+            "amount": str(amount),
+            "platform_charge": str(platform_charge),
+            "vendor_received": str(vendor_amount)
         }, status=200)
         
 # Unregistered user

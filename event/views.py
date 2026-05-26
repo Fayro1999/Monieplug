@@ -21,6 +21,9 @@ from rest_framework.permissions import BasePermission
 import hmac, hashlib, json
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import PermissionDenied
+
 
 
 
@@ -108,6 +111,50 @@ class IsEventOrganizer(BasePermission):
     def has_object_permission(self, request, view, obj):
         # obj is a Ticket instance
         return obj.event.organizer == request.user
+
+
+
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
+
+from .models import Event, Ticket
+from .serializers import TicketSerializer
+
+
+class BulkTicketCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        event_id = request.data.get("event")
+        tickets = request.data.get("tickets", [])
+
+        # FIX 1: Safe event lookup
+        event = get_object_or_404(Event, id=event_id)
+
+        if event.organizer != request.user:
+            raise PermissionDenied("Not allowed")
+
+        created = []
+
+        for t in tickets:
+            created.append(
+                Ticket.objects.create(
+                    event=event,
+                    name=t["name"],
+                    price=t["price"],
+                    # FIX 2: Image support added
+                    ticket_image=t.get("ticket_image")
+                )
+            )
+
+        return Response(
+            TicketSerializer(created, many=True).data,
+            status=201
+        )
+
 
 
 # 🔹 View, Update, Delete a Ticket
