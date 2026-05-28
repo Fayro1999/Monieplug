@@ -42,7 +42,7 @@ class VendorQRCode(models.Model):
         if creating or not self.qr_code_image:
 
             # ✅ IMPORTANT: QR now contains ONLY a resolvable backend URL
-            qr_data = f"https://yourapi.com/api/scan2pay/checkout/{self.id}/"
+            qr_data = f"https://monieplug.onrender.com/api/scan2pay/checkout/{self.id}/"
 
             qr = qrcode.make(qr_data)
 
