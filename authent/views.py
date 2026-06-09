@@ -66,6 +66,8 @@ from .serializers import SignupSerializer
 from .models import User
 
 
+
+
 class SignupAndOpenWallet(APIView):
     """
     Register a new user and open a customer wallet via WAAS API.
@@ -315,6 +317,26 @@ class SetTransactionPin(APIView):
         user.transaction_pin = make_password(pin)
         user.save()
         return Response({"message": "Transaction PIN set successfully"})
+
+
+
+class CheckTransactionPin(APIView):
+    """
+    get:
+    Check if the authenticated user has a transaction PIN set.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: dict})
+    def get(self, request):
+        user = request.user
+
+        pin_set = bool(user.transaction_pin)
+
+        return Response({
+            "pin_set": pin_set
+        })
 
 
 
@@ -1061,6 +1083,21 @@ class WalletTransactionHistoryView(APIView):
 
 
 
+import requests
+from django.conf import settings
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from drf_spectacular.utils import extend_schema
+
+from .serializers import (
+    OtherBankEnquirySerializer,
+    OtherBankEnquiryResponseSerializer,
+)
+
+
 class OtherBankAccountEnquiryView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1076,8 +1113,12 @@ class OtherBankAccountEnquiryView(APIView):
 
         try:
             resp = requests.post(url, json=payload, timeout=30)
-            return resp.json().get("accessToken")
-        except Exception:
+            resp.raise_for_status()
+
+            data = resp.json()
+            return data.get("accessToken")
+
+        except requests.RequestException:
             return None
 
     @extend_schema(
@@ -1091,7 +1132,7 @@ class OtherBankAccountEnquiryView(APIView):
 
         customer_data = serializer.validated_data["customer"]
 
-        # 1. Get WAAS token
+        # Get WAAS token
         token = self.get_waas_token()
 
         if not token:
@@ -1099,32 +1140,72 @@ class OtherBankAccountEnquiryView(APIView):
                 "status": "FAILED",
                 "message": "Authentication failed",
                 "data": None
-            }, status=500)
+            }, status=401)
 
-        # 2. WAAS endpoint
         url = "http://102.216.128.75:9090/waas/api/v1/other_banks_enquiry"
 
         headers = {
             "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
+        # Convert Django request → WAAS format
         payload = {
-            "customer": customer_data
+            "customer": {
+                "account": {
+                    "bank": customer_data["bankCode"],
+                    "number": customer_data["accountNumber"]
+                }
+            }
         }
 
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
-            data = resp.json()
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
 
-            # 3. Handle WAAS response
+            print("=== WAAS REQUEST ===")
+            print(payload)
+
+            print("=== WAAS STATUS CODE ===")
+            print(resp.status_code)
+
+            print("=== WAAS RESPONSE ===")
+            print(resp.text)
+
+            # Safe JSON parsing
+            try:
+                data = resp.json()
+            except ValueError:
+                return Response({
+                    "status": "FAILED",
+                    "message": "Invalid response from WAAS",
+                    "data": None
+                }, status=502)
+
+            # WAAS success logic (VERY IMPORTANT)
+            message = (data.get("message") or "").lower()
+            code = data.get("code")
+
+            is_success = (
+                resp.ok and (
+                    code == "00" or
+                    "success" in message or
+                    "approved" in message
+                )
+            )
+
             return Response({
-                "status": data.get("status"),
+                "status": "SUCCESS" if is_success else "FAILED",
                 "message": data.get("message"),
-                "data": data.get("data")
-            }, status=200 if data.get("status") == "SUCCESS" else 400)
+                "data": data.get("data") or data
+            }, status=200 if is_success else 400)
 
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             return Response({
                 "status": "FAILED",
                 "message": str(e),

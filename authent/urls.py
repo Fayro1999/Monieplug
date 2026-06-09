@@ -16,6 +16,7 @@ from .views import (
     GetSingleUserView,
     WalletTransactionHistoryView,
     OtherBankAccountEnquiryView,
+    CheckTransactionPin,
 )
 
 urlpatterns = [
@@ -34,4 +35,5 @@ urlpatterns = [
     path("users/<uuid:id>/",GetSingleUserView.as_view(), name="get-user"),
     path("transaction-history/",WalletTransactionHistoryView.as_view(), name="transaction-history"),
     path("other-bank-enquiry/",OtherBankAccountEnquiryView.as_view(), name="other-bank-enquiry"),
+    path("check-transaction-pin/",CheckTransactionPin.as_view(), name="CheckTransactionPin"),
 ]

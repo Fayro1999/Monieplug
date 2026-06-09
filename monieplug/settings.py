@@ -118,7 +118,7 @@ DATABASES = {
 
 DATABASES = {
     'default': dj_database_url.config(
-        default='postgresql://monieplug_6cym_user:1F3YhJFVrqX7hDKUp60BE0dKs38Qo0I7@dpg-d7rgj7jrjlhs73fobaqg-a.oregon-postgres.render.com/monieplug_6cym',
+        default='postgresql://monieplug_etlp_user:A4CIM82VwwU2Jr9fQsdmetrurg0OHZB8@dpg-d8jvoajtqb8s73cp1b70-a.oregon-postgres.render.com/monieplug_etlp',
         conn_max_age=600,
         ssl_require=True   # 👈 This line forces SSL
     )
