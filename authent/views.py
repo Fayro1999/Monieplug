@@ -472,7 +472,12 @@ class TransferFundsView(APIView):
     "transaction": {
         "reference": short_ref
     },
-    "transactionType": "INTRA_BANK"
+    "transactionType": "INTRA_BANK",
+    "merchant": {
+  "isFee": True,
+  "merchantFeeAccount": "1100015137",
+  "merchantFeeAmount": "9.25"
+}
 }
 
         headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}

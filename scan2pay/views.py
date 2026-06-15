@@ -231,7 +231,7 @@ class Scan2PayCheckoutView(APIView):
     # ✔ CUSTOMER = SENDER ONLY
     "customer": {
         "account": {
-            "number": user.wallet_account_number,
+            "number": settings.PLATFORM_ACCOUNT_NUMBER,
             "bank": "120001",
             "senderaccountnumber": user.wallet_account_number,
             "name": f"{user.first_name} {user.last_name}",
@@ -241,14 +241,10 @@ class Scan2PayCheckoutView(APIView):
 
     # ✔ MERCHANT / PLATFORM = RECEIVER
     "merchant": {
-        "account": {
-            "number": settings.PLATFORM_ACCOUNT_NUMBER,
-            "bank": "120001",
-            "merchantFeeAmount": str(platform_charge),
-            
-        },
-        "isFee": True
-    },
+    "isFee": True,
+    "merchantFeeAccount": "1100015137",
+    "merchantFeeAmount": "5.00"
+},
 
     "transactionType": "INTRA_BANK",
     "narration": narration

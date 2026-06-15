@@ -5,7 +5,7 @@ from .models import Event, Ticket, TicketPurchase
 class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
-        fields = ['id','name', 'price', 'ticket_image']
+        fields = ['id','event','name', 'price', 'ticket_image']
         
 
 
