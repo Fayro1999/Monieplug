@@ -159,34 +159,41 @@ class SignupAndOpenWallet(APIView):
         except Exception as e:
             return Response({"error": "Failed to open wallet", "details": str(e)}, status=500)
 
-        # 7️⃣ Send verification email
+                # 7️⃣ Send verification email
         subject = "Verify your email"
+
         message = (
             f"Hello {user.first_name},\n\n"
             f"Your verification code is {verification_code}.\n"
             f"It expires in 5 minutes.\n\n"
             f"Thanks."
         )
+
         try:
-            def send_email():
-                send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
-            threading.Thread(target=send_email).start()
-            #send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=True)
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [email],
+                fail_silently=False
+            )
+
         except Exception as e:
             return Response({
                 "error": "Email sending failed",
                 "details": str(e)
             }, status=500)
+
         # 8️⃣ Return response
         return Response({
             "message": "Account created successfully. Please verify email.",
             "wallet_id": user.wallet_id,
             "account_number": user.wallet_account_number,
             "waas_response": wallet_data,
-            "verification_code":verification_code
+            "verification_code": verification_code
         }, status=201)
 
-
+        
 class VerifyEmail(APIView):
     """
     post:

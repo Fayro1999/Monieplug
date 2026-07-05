@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import dj_database_url
 import cloudinary
+import cloudinary.api
+import cloudinary.uploader
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -226,20 +228,27 @@ CACHES = {
 
 #MEDIA_URL = '/media/'
 #MEDIA_ROOT = BASE_DIR / "media"
-
-
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-
-MEDIA_URL = '/media/'
-
-
-
+#MEDIA_URL = '/media/'
 cloudinary.config(
-    cloud_name='drz8m5hj2',
-    api_key='663438544161794',
-    api_secret= "4j2ixRIYabfIjWccKId87_EpUCQ",
+    cloud_name="drz8m5hj2",
+    api_key="632275872776746",
+    api_secret="awbzzxTeymMl7EbJam-eYyQW8d8",
 )
 
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": "drz8m5hj2",#drz8m5hj2
+    "API_KEY": "632275872776746",#632275872776746
+    "API_SECRET": "awbzzxTeymMl7EbJam-eYyQW8d8",#awbzzxTeymMl7EbJam-eYyQW8d8
+}
+
+STORAGES = {
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
