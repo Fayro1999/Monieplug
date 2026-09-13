@@ -18,3 +18,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Environment variables / secrets
+.env
+*.env
+
+# Database
+db.sqlite3
+*.sqlite3
+
+# Django cache
+django_cache/

@@ -2,6 +2,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 import uuid
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -45,6 +46,42 @@ class User(AbstractBaseUser, PermissionsMixin):
     # 🔐 Security
     transaction_pin = models.CharField(max_length=128, blank=True, null=True)  # hashed pin
     email_verification_code = models.CharField(max_length=6, blank=True, null=True)
+
+
+    # ===============================
+# KYC / Identity Verification
+# ===============================
+
+    is_identity_verified = models.BooleanField(default=False)
+
+    verification_status = models.CharField(
+        max_length=20,
+        choices=[
+            ("Pending", "Pending"),
+            ("Ongoing", "Ongoing"),
+            ("Completed", "Completed"),
+            ("Failed", "Failed"),
+            ("Abandoned", "Abandoned"),
+        ],
+        default="Pending",
+    )
+
+    verification_mode = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+    )
+
+    dojah_reference_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+    )
+
+    identity_verified_at = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
 
     objects = UserManager()
 
