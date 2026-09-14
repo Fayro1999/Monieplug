@@ -120,7 +120,7 @@ DATABASES = {
 
 DATABASES = {
     'default': dj_database_url.config(
-        default='postgresql://monieplug_etlp_user:A4CIM82VwwU2Jr9fQsdmetrurg0OHZB8@dpg-d8jvoajtqb8s73cp1b70-a.oregon-postgres.render.com/monieplug_etlp',
+        default='postgresql://monieplug_q5gk_user:Kh4e8AYm1uocH3Ff0i7v1y3bhGNZ7lDG@dpg-dahsmc7qj5pc73ad3qr0-a.oregon-postgres.render.com/monieplug_q5gk',
         conn_max_age=600,
         ssl_require=True   # 👈 This line forces SSL
     )
@@ -173,11 +173,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_SSL =  False #True
-EMAIL_USE_TLS = True #False
-EMAIL_HOST_USER = 'monieplug.eservice@gmail.com'
-EMAIL_HOST_PASSWORD = 'wwpi erqo nyla ncda'  # App Password
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+EMAIL_HOST_USER = 'monieplug.admin@gmail.com'
+EMAIL_HOST_PASSWORD = 'zism nwat dgzj bfab'  # App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 EMAIL_TIMEOUT = 60
 
