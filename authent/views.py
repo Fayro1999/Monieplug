@@ -20,7 +20,7 @@ import threading
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes,  OpenApiParameter
 #from drf_spectacular.utils import extend_schema, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
-
+from django.db import transaction
 from .serializers import (
     SignupSerializer, VerifyEmailSerializer, LoginSerializer,
     SetTransactionPinSerializer, ForgotPasswordSerializer,
@@ -87,6 +87,7 @@ class SignupAndOpenWallet(APIView):
         # Check duplicates
         if User.objects.filter(email=email).exists():
             return Response({"error": "Email already exists"}, status=400)
+
         if User.objects.filter(phone=phone).exists():
             return Response({"error": "Phone already exists"}, status=400)
 
@@ -94,105 +95,207 @@ class SignupAndOpenWallet(APIView):
         if not data.get("bvn") and not data.get("nin_user_id"):
             return Response({"error": "BVN or NIN is required"}, status=400)
 
-        #Create user
-        verification_code = str(random.randint(100000, 999999))
-        user = User.objects.create_user(
-            email=email,
-            phone=phone,
-            first_name=data.get("first_name"),
-            last_name=data.get("last_name"),
-            password=password,
-            email_verification_code=verification_code,
-        )
-        cache.set(f"verification_code:{verification_code}", email, timeout=300)
+        with transaction.atomic():
 
-        # 4️⃣ Authenticate with WAAS
-        auth_url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
-        auth_payload = {
-            "username": settings.WAAS_USERNAME,
-            "password": settings.WAAS_PASSWORD,
-            "clientId": settings.WAAS_CLIENT_ID,
-            "clientSecret": settings.WAAS_CLIENT_SECRET,
-        }
+            # 1️⃣ Create user
+            verification_code = str(random.randint(100000, 999999))
 
-        try:
-            auth_resp = requests.post(auth_url, json=auth_payload, timeout=30)
-            auth_resp.raise_for_status()
-            access_token = auth_resp.json().get("accessToken")
-        except Exception as e:
-            return Response({"error": "Failed to connect to WAAS auth", "details": str(e)}, status=500)
-
-        # 5️⃣ Prepare wallet payload
-        wallet_payload = {
-            "transactionTrackingRef": str(uuid.uuid4()),
-            "lastName": user.last_name,
-            "otherNames": user.first_name,
-            "accountName": f"MONIEPLUG/{user.first_name} {user.last_name}",
-            "phoneNo": user.phone,
-            "gender": int(data.get("gender", 0)),
-            "dateOfBirth": data.get("date_of_birth"),  # must be DD/MM/YYYY
-            "address": data.get("address"),
-            "email": user.email,
-        }
-        if data.get("bvn"):
-            wallet_payload["bvn"] = data.get("bvn")
-        if data.get("nin_user_id"):
-            wallet_payload["nin"] = data.get("nin_user_id")
-
-        wallet_url = "http://102.216.128.75:9090/waas/api/v1/open_wallet"
-        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
-        # 6️⃣ Open wallet
-        try:
-            wallet_resp = requests.post(wallet_url, json=wallet_payload, headers=headers, timeout=30)
-            wallet_resp.raise_for_status()
-            wallet_data = wallet_resp.json()
-
-            if wallet_data.get("status", "").upper() == "SUCCESS":
-                account_info = wallet_data.get("data", {})
-                # Use customerID if walletId is missing
-                user.wallet_id = account_info.get("walletId") or account_info.get("customerID")
-                user.wallet_account_number = account_info.get("accountNumber")
-                user.save()
-            else:
-                return Response({"error": "Wallet creation failed", "waas_response": wallet_data}, status=400)
-        except Exception as e:
-            return Response({"error": "Failed to open wallet", "details": str(e)}, status=500)
-
-                # 7️⃣ Send verification email
-        subject = "Verify your email"
-
-        message = (
-            f"Hello {user.first_name},\n\n"
-            f"Your verification code is {verification_code}.\n"
-            f"It expires in 5 minutes.\n\n"
-            f"Thanks."
-        )
-
-        try:
-            send_mail(
-                subject,
-                message,
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False
+            user = User.objects.create_user(
+                email=email,
+                phone=phone,
+                first_name=data.get("first_name"),
+                last_name=data.get("last_name"),
+                password=password,
+                email_verification_code=verification_code,
             )
 
-        except Exception as e:
-            return Response({
-                "error": "Email sending failed",
-                "details": str(e)
-            }, status=500)
+            cache.set(
+                f"verification_code:{verification_code}",
+                email,
+                timeout=300
+            )
 
-        # 8️⃣ Return response
-        return Response({
-            "message": "Account created successfully. Please verify email.",
-            "wallet_id": user.wallet_id,
-            "account_number": user.wallet_account_number,
-            "waas_response": wallet_data,
-            "verification_code": verification_code
-        }, status=201)
+            # 2️⃣ Authenticate with WAAS
+            auth_url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
 
+            auth_payload = {
+                "username": settings.WAAS_USERNAME,
+                "password": settings.WAAS_PASSWORD,
+                "clientId": settings.WAAS_CLIENT_ID,
+                "clientSecret": settings.WAAS_CLIENT_SECRET,
+            }
+
+            try:
+                auth_resp = requests.post(
+                    auth_url,
+                    json=auth_payload,
+                    timeout=30
+                )
+
+                auth_resp.raise_for_status()
+
+                auth_data = auth_resp.json()
+                access_token = auth_data.get("accessToken")
+
+                if not access_token:
+                    transaction.set_rollback(True)
+
+                    return Response(
+                        {
+                            "error": "WAAS authentication failed",
+                            "waas_response": auth_data
+                        },
+                        status=400
+                    )
+
+            except Exception as e:
+                transaction.set_rollback(True)
+
+                return Response(
+                    {
+                        "error": "Failed to connect to WAAS auth",
+                        "details": str(e)
+                    },
+                    status=500
+                )
+
+            # 3️⃣ Prepare wallet payload
+            wallet_payload = {
+                "transactionTrackingRef": str(uuid.uuid4()),
+                "lastName": user.last_name,
+                "otherNames": user.first_name,
+                "accountName": f"MONIEPLUG/{user.first_name} {user.last_name}",
+                "phoneNo": user.phone,
+                "gender": int(data.get("gender", 0)),
+                "dateOfBirth": data.get("date_of_birth"),
+                "address": data.get("address"),
+                "email": user.email,
+            }
+
+            if data.get("bvn"):
+                wallet_payload["bvn"] = data.get("bvn")
+
+            if data.get("nin_user_id"):
+                wallet_payload["nin"] = data.get("nin_user_id")
+
+            wallet_url = "http://102.216.128.75:9090/waas/api/v1/open_wallet"
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+
+            # 4️⃣ Open wallet
+            try:
+                wallet_resp = requests.post(
+                    wallet_url,
+                    json=wallet_payload,
+                    headers=headers,
+                    timeout=30
+                )
+
+                try:
+                    wallet_data = wallet_resp.json()
+                except ValueError:
+                    transaction.set_rollback(True)
+
+                    return Response(
+                        {
+                            "error": "Invalid response from WAAS",
+                            "status_code": wallet_resp.status_code,
+                            "waas_response": wallet_resp.text
+                        },
+                        status=502
+                    )
+
+                if not wallet_resp.ok:
+                    transaction.set_rollback(True)
+
+                    return Response(
+                        {
+                            "error": "Wallet creation failed",
+                            "status_code": wallet_resp.status_code,
+                            "waas_response": wallet_data
+                        },
+                        status=400
+                    )
+
+                if wallet_data.get("status", "").upper() != "SUCCESS":
+                    transaction.set_rollback(True)
+
+                    return Response(
+                        {
+                            "error": "Wallet creation failed",
+                            "waas_response": wallet_data
+                        },
+                        status=400
+                    )
+
+                account_info = wallet_data.get("data", {})
+
+                user.wallet_id = (
+                    account_info.get("walletId")
+                    or account_info.get("customerID")
+                )
+
+                user.wallet_account_number = account_info.get(
+                    "accountNumber"
+                )
+
+                user.save()
+
+            except requests.exceptions.RequestException as e:
+                transaction.set_rollback(True)
+
+                return Response(
+                    {
+                        "error": "Failed to connect to WAAS",
+                        "details": str(e)
+                    },
+                    status=503
+                )
+
+            # 5️⃣ Send verification email
+            subject = "Verify your email"
+
+            message = (
+                f"Hello {user.first_name},\n\n"
+                f"Your verification code is {verification_code}.\n"
+                f"It expires in 5 minutes.\n\n"
+                f"Thanks."
+            )
+
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    settings.DEFAULT_FROM_EMAIL,
+                    [email],
+                    fail_silently=False
+                )
+
+            except Exception as e:
+                transaction.set_rollback(True)
+
+                return Response(
+                    {
+                        "error": "Email sending failed",
+                        "details": str(e)
+                    },
+                    status=500
+                )
+
+            # 6️⃣ Successful signup
+            return Response(
+                {
+                    "message": "Account created successfully. Please verify email.",
+                    "wallet_id": user.wallet_id,
+                    "account_number": user.wallet_account_number,
+                    "waas_response": wallet_data,
+                    "verification_code": verification_code
+                },
+                status=201
+            )
         
 class VerifyEmail(APIView):
     """

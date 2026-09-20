@@ -41,9 +41,8 @@ class VendorQRCode(models.Model):
         # Generate QR only on creation
         if creating or not self.qr_code_image:
 
-            # ✅ IMPORTANT: QR now contains ONLY a resolvable backend URL
-            qr_data = f"https://monieplug.onrender.com/api/scan2pay/checkout/{self.id}/"
-
+            # QR contains the frontend Scan2Pay checkout URL
+            qr_data = f"https://monieplug-new.vercel.app/scantopay/qr?vendor={self.id}"
             qr = qrcode.make(qr_data)
 
             buffer = io.BytesIO()
