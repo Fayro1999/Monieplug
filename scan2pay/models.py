@@ -42,7 +42,7 @@ class VendorQRCode(models.Model):
         if creating or not self.qr_code_image:
 
             # QR contains the frontend Scan2Pay checkout URL
-            qr_data = f"https://monieplug-new.vercel.app/scantopay/qr?vendor={self.id}"
+            qr_data = f"https://monieplug-new.vercel.app/scantopay/qr?vendor={self.vendor_id}"
             qr = qrcode.make(qr_data)
 
             buffer = io.BytesIO()
