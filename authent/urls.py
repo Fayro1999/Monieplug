@@ -17,6 +17,9 @@ from .views import (
     WalletTransactionHistoryView,
     OtherBankAccountEnquiryView,
     CheckTransactionPin,
+    WalletDebitView,
+    WalletCreditView,
+    VerifyIdentityView,
 )
 
 urlpatterns = [
@@ -36,4 +39,7 @@ urlpatterns = [
     path("transaction-history/",WalletTransactionHistoryView.as_view(), name="transaction-history"),
     path("other-bank-enquiry/",OtherBankAccountEnquiryView.as_view(), name="other-bank-enquiry"),
     path("check-transaction-pin/",CheckTransactionPin.as_view(), name="CheckTransactionPin"),
+    path("wallet/debit/", WalletDebitView.as_view(), name="wallet-debit"),
+    path("wallet/credit/", WalletCreditView.as_view(), name="wallet-credit"),
+    path("verify-identity/", VerifyIdentityView.as_view(), name="verify_identity"),
 ]

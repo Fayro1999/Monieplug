@@ -1,344 +1,1309 @@
 # authent/views.py
-import uuid, hashlib, requests, random
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.core.cache import cache
-from django.core.mail import send_mail
-from rest_framework import status
-from rest_framework.permissions import AllowAny,IsAuthenticated
-from django.contrib.auth import authenticate
-from rest_framework.authtoken.models import Token
-from .utility import encrypt_aes_ecb_base64
-from Crypto.Cipher import AES
-#from django.contrib.auth.hashers import check_password
-from django.contrib.auth.hashers import make_password, check_password
-
-import base64
-import threading
-from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes,  OpenApiParameter
-#from drf_spectacular.utils import extend_schema, OpenApiResponse
-from drf_spectacular.types import OpenApiTypes
-from django.db import transaction
-from .serializers import (
-    SignupSerializer, VerifyEmailSerializer, LoginSerializer,
-    SetTransactionPinSerializer, ForgotPasswordSerializer,
-    ResetPasswordSerializer, TransferFundsSerializer,
-    VerifyAccountSerializer, WalletEnquiryResponseSerializer, UserSerializer,
-    WalletTransactionHistorySerializer, WalletTransactionHistoryResponseSerializer,
-    OtherBankEnquirySerializer, OtherBankEnquiryResponseSerializer
-
-)
-
-User = get_user_model()
-
-
-
-#import requests, random, uuid
-#from django.conf import settings
-#from django.core.cache import cache
-#from django.core.mail import send_mail
-#from rest_framework.views import APIView
-#from rest_framework.response import Response
-#from rest_framework import status
-#from rest_framework.permissions import AllowAny
-#from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes
-#from .models import User
-#from .serializers import SignupSerializer
-
 
 import random
 import uuid
 import requests
+
+from django.conf import settings
 from django.core.cache import cache
 from django.core.mail import send_mail
-from django.conf import settings
+from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import make_password, check_password
+from django.db import transaction
+from django.utils import timezone
 
-from rest_framework import status
-from rest_framework.permissions import AllowAny
-from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.authtoken.models import Token
+from rest_framework import status
 
-from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiResponse,
+    OpenApiTypes,
+)
 
-from .serializers import SignupSerializer
 from .models import User
+from .serializers import (
+    SignupSerializer,
+    VerifyEmailSerializer,
+    VerifyIdentitySerializer,
+    LoginSerializer,
+    SetTransactionPinSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
+    TransferFundsSerializer,
+    VerifyAccountSerializer,
+    GetBalanceSerializer,
+    UserSerializer,
+    WalletTransactionHistorySerializer,
+    WalletTransactionHistoryResponseSerializer,
+    OtherBankEnquirySerializer,
+    OtherBankEnquiryResponseSerializer,
+    WalletDebitCreditSerializer,
+)
 
 
+# ============================================================
+# WAAS CONFIGURATION
+# ============================================================
 
+WAAS_BASE_URL = "http://102.216.128.75:9090/waas/api/v1"
+
+
+# ============================================================
+# WAAS AUTHENTICATION
+# ============================================================
+
+def get_waas_token():
+
+    url = f"{WAAS_BASE_URL}/authenticate"
+
+    payload = {
+        "username": settings.WAAS_USERNAME,
+        "password": settings.WAAS_PASSWORD,
+        "clientId": settings.WAAS_CLIENT_ID,
+        "clientSecret": settings.WAAS_CLIENT_SECRET,
+    }
+
+    try:
+
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+
+        try:
+            data = response.json()
+        except ValueError:
+            data = {
+                "message": response.text
+            }
+
+        if not response.ok:
+
+            return None, data
+
+        token = data.get("accessToken")
+
+        if not token:
+
+            return None, data
+
+        return token, data
+
+    except requests.RequestException as exc:
+
+        return None, {
+            "message": str(exc)
+        }
+
+
+# ============================================================
+# OPEN WAAS WALLET
+# ============================================================
+
+def open_waas_wallet(user, waas_token, transaction_ref):
+
+    wallet_url = f"{WAAS_BASE_URL}/open_wallet"
+
+    # --------------------------------------------------------
+    # BASE PAYLOAD
+    # --------------------------------------------------------
+
+    wallet_payload = {
+        "transactionTrackingRef": transaction_ref,
+
+        "lastName": user.last_name,
+
+        "otherNames": user.first_name,
+
+        "accountName": (
+            f"MONIEPLUG/"
+            f"{user.first_name} "
+            f"{user.last_name}"
+        ),
+
+        "phoneNo": user.phone,
+
+        "gender": int(user.gender),
+
+        "dateOfBirth": user.date_of_birth.strftime(
+            "%d/%m/%Y"
+        ),
+
+        "address": user.address,
+
+        "email": user.email,
+    }
+
+    # --------------------------------------------------------
+    # IDENTITY
+    # --------------------------------------------------------
+
+    if user.nin:
+
+        wallet_payload["nationalIdentityNo"] = user.nin
+
+    if user.nin_user_id:
+
+        wallet_payload["ninUserId"] = user.nin_user_id
+
+    if user.bvn:
+
+        wallet_payload["bvn"] = user.bvn
+
+    # --------------------------------------------------------
+    # NEXT OF KIN
+    # --------------------------------------------------------
+
+    if user.next_of_kin_name:
+
+        wallet_payload["nextOfKinName"] = (
+            user.next_of_kin_name
+        )
+
+    if user.next_of_kin_phone:
+
+        wallet_payload["nextOfKinPhoneNo"] = (
+            user.next_of_kin_phone
+        )
+
+    # --------------------------------------------------------
+    # REFERRAL
+    # --------------------------------------------------------
+
+    if user.referral_name:
+
+        wallet_payload["referralName"] = (
+            user.referral_name
+        )
+
+    if user.referral_phone:
+
+        wallet_payload["referralPhoneNo"] = (
+            user.referral_phone
+        )
+
+    headers = {
+        "Authorization": f"Bearer {waas_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    # --------------------------------------------------------
+    # CALL WAAS
+    # --------------------------------------------------------
+
+    try:
+
+        response = requests.post(
+            wallet_url,
+            json=wallet_payload,
+            headers=headers,
+            timeout=60,
+        )
+
+        try:
+            wallet_data = response.json()
+
+        except ValueError:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Invalid response received "
+                        "from WAAS wallet service."
+                    ),
+                    "waas_response": response.text,
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+    except requests.RequestException as exc:
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "Unable to connect to WAAS "
+                    "wallet service."
+                ),
+                "details": str(exc),
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # --------------------------------------------------------
+    # CHECK WAAS STATUS
+    # --------------------------------------------------------
+
+    if (
+        str(
+            wallet_data.get("status", "")
+        ).upper()
+        != "SUCCESS"
+    ):
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": wallet_data.get(
+                    "message",
+                    "WAAS wallet creation failed.",
+                ),
+                "waas_response": wallet_data,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # --------------------------------------------------------
+    # EXTRACT ACCOUNT
+    # --------------------------------------------------------
+
+    account_info = wallet_data.get(
+        "data",
+        {}
+    )
+
+    wallet_id = (
+        account_info.get("walletId")
+        or account_info.get("customerID")
+    )
+
+    account_number = account_info.get(
+        "accountNumber"
+    )
+
+    wallet_name = (
+    account_info.get("accountName")
+    or account_info.get("fullName")
+    or f"MONIEPLUG/{user.first_name} {user.last_name}"
+    )
+
+    # --------------------------------------------------------
+    # SUCCESS WITHOUT ACCOUNT NUMBER = NOT COMPLETE
+    # --------------------------------------------------------
+
+    if not account_number:
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "WAAS reported success but "
+                    "no account number was returned."
+                ),
+                "waas_response": wallet_data,
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # --------------------------------------------------------
+    # SAVE WALLET
+    # --------------------------------------------------------
+
+    user.wallet_id = wallet_id
+
+    user.wallet_account_number = account_number
+
+    user.wallet_name = wallet_name
+
+    user.is_identity_verified = True
+
+    user.verification_status = "Completed"
+
+    user.identity_verified_at = timezone.now()
+
+    # Facial image is no longer needed after
+    # successful identity verification and wallet opening.
+    user.facial_image = None
+
+    user.save(
+        update_fields=[
+            "wallet_id",
+            "wallet_account_number",
+            "wallet_name",
+            "is_identity_verified",
+            "verification_status",
+            "identity_verified_at",
+        ]
+    )
+
+    # --------------------------------------------------------
+    # RESPONSE
+    # --------------------------------------------------------
+
+    return Response(
+        {
+            "status": "SUCCESS",
+            "message": (
+                "Identity verified and wallet "
+                "created successfully."
+            ),
+            "wallet_id": wallet_id,
+            "account_number": account_number,
+            "wallet_name": wallet_name,
+            "verification_status": "Completed",
+        },
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ============================================================
+# SIGNUP
+# ============================================================
 
 class SignupAndOpenWallet(APIView):
-    """
-    Register a new user and open a customer wallet via WAAS API.
-    """
+
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=SignupSerializer,
-        responses={201: OpenApiResponse(OpenApiTypes.OBJECT, description="Signup success")}
+        responses={
+            201: OpenApiResponse(
+                OpenApiTypes.OBJECT,
+                description=(
+                    "Signup created and email "
+                    "verification sent."
+                ),
+            ),
+        },
+        tags=["Authentication"],
     )
     def post(self, request):
-        data = request.data
-        phone = data.get("phone")
-        email = data.get("email")
-        password = data.get("password")
 
-        # Check duplicates
-        if User.objects.filter(email=email).exists():
-            return Response({"error": "Email already exists"}, status=400)
+        serializer = SignupSerializer(
+            data=request.data
+        )
 
-        if User.objects.filter(phone=phone).exists():
-            return Response({"error": "Phone already exists"}, status=400)
+        serializer.is_valid(
+            raise_exception=True
+        )
 
-        # Ensure BVN or NIN is provided
-        if not data.get("bvn") and not data.get("nin_user_id"):
-            return Response({"error": "BVN or NIN is required"}, status=400)
+        data = serializer.validated_data
 
-        with transaction.atomic():
+        email = data["email"].strip().lower()
 
-            # 1️⃣ Create user
-            verification_code = str(random.randint(100000, 999999))
+        phone = data["phone"].strip()
 
-            user = User.objects.create_user(
-                email=email,
-                phone=phone,
-                first_name=data.get("first_name"),
-                last_name=data.get("last_name"),
-                password=password,
-                email_verification_code=verification_code,
-            )
+        # ----------------------------------------------------
+        # DUPLICATE EMAIL
+        # ----------------------------------------------------
 
-            cache.set(
-                f"verification_code:{verification_code}",
-                email,
-                timeout=300
-            )
+        existing_email = User.objects.filter(
+            email=email
+        ).first()
 
-            # 2️⃣ Authenticate with WAAS
-            auth_url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+        if existing_email:
 
-            auth_payload = {
-                "username": settings.WAAS_USERNAME,
-                "password": settings.WAAS_PASSWORD,
-                "clientId": settings.WAAS_CLIENT_ID,
-                "clientSecret": settings.WAAS_CLIENT_SECRET,
-            }
-
-            try:
-                auth_resp = requests.post(
-                    auth_url,
-                    json=auth_payload,
-                    timeout=30
-                )
-
-                auth_resp.raise_for_status()
-
-                auth_data = auth_resp.json()
-                access_token = auth_data.get("accessToken")
-
-                if not access_token:
-                    transaction.set_rollback(True)
-
-                    return Response(
-                        {
-                            "error": "WAAS authentication failed",
-                            "waas_response": auth_data
-                        },
-                        status=400
-                    )
-
-            except Exception as e:
-                transaction.set_rollback(True)
+            if not existing_email.is_active:
 
                 return Response(
                     {
-                        "error": "Failed to connect to WAAS auth",
-                        "details": str(e)
+                        "status": "PENDING",
+                        "message": (
+                            "An account with this email "
+                            "already exists and is awaiting "
+                            "email verification."
+                        ),
+                        "next_step": "verify_email",
                     },
-                    status=500
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # 3️⃣ Prepare wallet payload
-            wallet_payload = {
-                "transactionTrackingRef": str(uuid.uuid4()),
-                "lastName": user.last_name,
-                "otherNames": user.first_name,
-                "accountName": f"MONIEPLUG/{user.first_name} {user.last_name}",
-                "phoneNo": user.phone,
-                "gender": int(data.get("gender", 0)),
-                "dateOfBirth": data.get("date_of_birth"),
-                "address": data.get("address"),
-                "email": user.email,
-            }
-
-            if data.get("bvn"):
-                wallet_payload["bvn"] = data.get("bvn")
-
-            if data.get("nin_user_id"):
-                wallet_payload["nin"] = data.get("nin_user_id")
-
-            wallet_url = "http://102.216.128.75:9090/waas/api/v1/open_wallet"
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json"
-            }
-
-            # 4️⃣ Open wallet
-            try:
-                wallet_resp = requests.post(
-                    wallet_url,
-                    json=wallet_payload,
-                    headers=headers,
-                    timeout=30
-                )
-
-                try:
-                    wallet_data = wallet_resp.json()
-                except ValueError:
-                    transaction.set_rollback(True)
-
-                    return Response(
-                        {
-                            "error": "Invalid response from WAAS",
-                            "status_code": wallet_resp.status_code,
-                            "waas_response": wallet_resp.text
-                        },
-                        status=502
-                    )
-
-                if not wallet_resp.ok:
-                    transaction.set_rollback(True)
-
-                    return Response(
-                        {
-                            "error": "Wallet creation failed",
-                            "status_code": wallet_resp.status_code,
-                            "waas_response": wallet_data
-                        },
-                        status=400
-                    )
-
-                if wallet_data.get("status", "").upper() != "SUCCESS":
-                    transaction.set_rollback(True)
-
-                    return Response(
-                        {
-                            "error": "Wallet creation failed",
-                            "waas_response": wallet_data
-                        },
-                        status=400
-                    )
-
-                account_info = wallet_data.get("data", {})
-
-                user.wallet_id = (
-                    account_info.get("walletId")
-                    or account_info.get("customerID")
-                )
-
-                user.wallet_account_number = account_info.get(
-                    "accountNumber"
-                )
-
-                user.save()
-
-            except requests.exceptions.RequestException as e:
-                transaction.set_rollback(True)
-
-                return Response(
-                    {
-                        "error": "Failed to connect to WAAS",
-                        "details": str(e)
-                    },
-                    status=503
-                )
-
-            # 5️⃣ Send verification email
-            subject = "Verify your email"
-
-            message = (
-                f"Hello {user.first_name},\n\n"
-                f"Your verification code is {verification_code}.\n"
-                f"It expires in 5 minutes.\n\n"
-                f"Thanks."
-            )
-
-            try:
-                send_mail(
-                    subject,
-                    message,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [email],
-                    fail_silently=False
-                )
-
-            except Exception as e:
-                transaction.set_rollback(True)
-
-                return Response(
-                    {
-                        "error": "Email sending failed",
-                        "details": str(e)
-                    },
-                    status=500
-                )
-
-            # 6️⃣ Successful signup
             return Response(
                 {
-                    "message": "Account created successfully. Please verify email.",
-                    "wallet_id": user.wallet_id,
-                    "account_number": user.wallet_account_number,
-                    "waas_response": wallet_data,
-                    "verification_code": verification_code
+                    "status": "FAILED",
+                    "message": (
+                        "An account with this email "
+                        "already exists."
+                    ),
                 },
-                status=201
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-class VerifyEmail(APIView):
-    """
-    post:
-    Verify a user’s email using a 6-digit code.
 
-    Request body:
-    {
-        "code": "123456"
-    }
+        # ----------------------------------------------------
+        # DUPLICATE PHONE
+        # ----------------------------------------------------
 
-    Response:
-    {
-        "message": "Email verified successfully"
-    }
-    """
-    permission_classes = [AllowAny]
-    @extend_schema(
-        request=VerifyEmailSerializer,
-        responses={201: None}
-    )
-    def post(self, request):
-        code = request.data.get("code")
+        if User.objects.filter(
+            phone=phone
+        ).exists():
 
-        # 1️⃣ Get email back from cache using the code
-        email = cache.get(f"verification_code:{code}")
-        if not email:
-            return Response({"error": "Invalid or expired code"}, status=400)
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "An account with this phone "
+                        "number already exists."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
+        # BVN OR NIN REQUIRED
+        # ----------------------------------------------------
+
+        bvn = data.get("bvn")
+
+        nin = data.get("nin")
+
+        if not bvn and not nin:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "BVN or NIN is required."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
+        # EMAIL VERIFICATION CODE
+        # ----------------------------------------------------
+
+        verification_code = str(
+            random.randint(100000, 999999)
+        )
+
+        # ----------------------------------------------------
+        # CREATE USER
+        #
+        # IMPORTANT:
+        # WAAS IS NOT CALLED HERE.
+        # ----------------------------------------------------
 
         try:
-            user = User.objects.get(email=email)
-            user.is_active = True
-            user.email_verification_code = None
-            user.save()
 
-            # 2️⃣ Remove code from cache after successful verification
-            cache.delete(f"verification_code:{code}")
+            with transaction.atomic():
 
-            return Response({"message": "Email verified successfully"})
+                user = User.objects.create_user(
+
+                    email=email,
+
+                    phone=phone,
+
+                    password=data["password"],
+
+                    first_name=data["first_name"],
+
+                    last_name=data["last_name"],
+
+                    date_of_birth=data["date_of_birth"],
+
+                    gender=data["gender"],
+
+                    address=data["address"],
+
+                    bvn=bvn,
+
+                    nin=nin,
+
+                    nin_user_id=data.get(
+                        "nin_user_id"
+                    ),
+
+                    next_of_kin_name=data.get(
+                        "next_of_kin_name"
+                    ),
+
+                    next_of_kin_phone=data.get(
+                        "next_of_kin_phone"
+                    ),
+
+                    referral_name=data.get(
+                        "referral_name"
+                    ),
+
+                    referral_phone=data.get(
+                        "referral_phone"
+                    ),
+
+                    email_verification_code=(
+                        verification_code
+                    ),
+
+                    is_active=False,
+
+                    is_identity_verified=False,
+
+                    verification_status="Pending",
+
+                    verification_mode=data.get(
+                        "verification_type",
+                        "OTP"
+                    ),
+
+                    facial_image=(
+                        data.get("image")
+                        if data.get("verification_type", "OTP") == "FACIAL"
+                        else None
+                    ),
+
+                    city=data.get("city"),
+                    state=data.get("state"),
+                    country=data.get("country"),
+                )
+
+        except Exception as exc:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Unable to create account."
+                    ),
+                    "details": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # ----------------------------------------------------
+        # CACHE CODE
+        # ----------------------------------------------------
+
+        cache.set(
+            f"email_verification:{user.id}",
+            verification_code,
+            timeout=600,
+        )
+
+        # ----------------------------------------------------
+        # SEND EMAIL
+        # ----------------------------------------------------
+
+        try:
+
+            send_mail(
+                subject="Verify your Monieplug account",
+
+                message=(
+                    f"Hello {user.first_name},\n\n"
+                    f"Your Monieplug verification "
+                    f"code is:\n\n"
+                    f"{verification_code}\n\n"
+                    "This code expires in 10 minutes.\n\n"
+                    "Do not share this code with anyone."
+                ),
+
+                from_email=settings.DEFAULT_FROM_EMAIL,
+
+                recipient_list=[
+                    user.email
+                ],
+
+                fail_silently=False,
+            )
+
+        except Exception as exc:
+
+            # Remove user if email cannot be sent.
+            user.delete()
+
+            cache.delete(
+                f"email_verification:{user.id}"
+            )
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Email verification could "
+                        "not be sent."
+                    ),
+                    "details": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # ----------------------------------------------------
+        # SUCCESS
+        # ----------------------------------------------------
+
+        return Response(
+            {
+                "status": "PENDING",
+
+                "message": (
+                    "Account created. Please verify "
+                    "your email."
+                ),
+
+                "user_id": str(user.id),
+
+                "email": user.email,
+
+                "next_step": "verify_email",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# ============================================================
+# VERIFY EMAIL
+# ============================================================
+
+class VerifyEmail(APIView):
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=VerifyEmailSerializer,
+        responses={
+            200: OpenApiResponse(
+                OpenApiTypes.OBJECT,
+                description=(
+                    "Email verified and WAAS "
+                    "identity verification initiated."
+                ),
+            ),
+            400: OpenApiResponse(
+                description="Invalid verification code."
+            ),
+            502: OpenApiResponse(
+                description="WAAS unavailable."
+            ),
+        },
+        tags=["Authentication"],
+    )
+    def post(self, request):
+
+        serializer = VerifyEmailSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        code = serializer.validated_data["code"]
+
+        # ----------------------------------------------------
+        # FIND PENDING USER
+        # ----------------------------------------------------
+
+        user = User.objects.filter(
+            email_verification_code=code,
+            is_active=False,
+        ).first()
+
+        if not user:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Invalid or expired "
+                        "email verification code."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
+        # CHECK CACHE
+        # ----------------------------------------------------
+
+        cached_code = cache.get(
+            f"email_verification:{user.id}"
+        )
+
+        if cached_code != code:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Verification code "
+                        "has expired."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
+        # MARK EMAIL VERIFIED
+        # ----------------------------------------------------
+
+        user.is_active = True
+
+        user.email_verification_code = None
+
+        user.save(
+            update_fields=[
+                "is_active",
+                "email_verification_code",
+            ]
+        )
+
+        cache.delete(
+            f"email_verification:{user.id}"
+        )
+
+        # ----------------------------------------------------
+        # NOW START WAAS IDENTITY VERIFICATION
+        # ----------------------------------------------------
+
+        return initiate_waas_identity(user)
+
+
+# ============================================================
+# INITIATE WAAS IDENTITY VERIFICATION
+# ============================================================
+
+def initiate_waas_identity(user):
+
+    waas_token, auth_response = get_waas_token()
+
+    if not waas_token:
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "Email verified, but WAAS "
+                    "authentication failed."
+                ),
+                "waas_response": auth_response,
+                "next_step": "retry_identity_verification",
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # --------------------------------------------------------
+    # UNIQUE TRANSACTION REFERENCE
+    # --------------------------------------------------------
+
+    transaction_ref = uuid.uuid4().hex[:15].upper()
+
+    verification_type = (
+        user.verification_mode or "OTP"
+    )
+
+    # --------------------------------------------------------
+    # WAAS IDENTITY INITIATE
+    # --------------------------------------------------------
+
+    url = f"{WAAS_BASE_URL}/identity/initiate"
+
+    payload = {
+        "transactionRef": transaction_ref,
+        "phoneNo": user.phone,
+        "type": verification_type,
+    }
+
+    # Add BVN if supplied
+    if user.bvn:
+        payload["bvn"] = str(user.bvn).strip()
+
+    # Add NIN if supplied
+    if user.nin:
+        payload["nin"] = str(user.nin).strip()
+
+
+    # --------------------------------------------------------
+    # FACIAL VERIFICATION
+    # WAAS requires image when type = FACIAL
+    # --------------------------------------------------------
+
+    if verification_type.upper() == "FACIAL":
+
+        if not user.facial_image:
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": "Facial verification image is missing.",
+                    "next_step": "signup_again",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload["image"] = user.facial_image
+
+
+    headers = {
+        "Authorization": f"Bearer {waas_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    # --------------------------------------------------------
+    # DEBUG - CHECK EXACT REQUEST SENT TO WAAS
+    # --------------------------------------------------------
+
+    print("======================================")
+    print("WAAS IDENTITY INITIATE")
+    print("URL:", url)
+    print("TRANSACTION REF:", transaction_ref)
+    print("PHONE:", user.phone)
+    print("VERIFICATION TYPE:", verification_type)
+    print("BVN PRESENT:", bool(user.bvn))
+    print("NIN PRESENT:", bool(user.nin))
+    print("FACIAL IMAGE PRESENT:", bool(user.facial_image))
+
+    if verification_type == "FACIAL":
+        print(
+            "FACIAL IMAGE LENGTH:",
+            len(user.facial_image or "")
+        )
+
+    print("======================================")
+
+    # --------------------------------------------------------
+    # CALL WAAS
+    # --------------------------------------------------------
+
+    try:
+
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=60,
+        )
+
+        print("======================================")
+        print("WAAS HTTP STATUS:", response.status_code)
+        print("WAAS RAW RESPONSE:", response.text)
+        print("======================================")
+
+        try:
+            waas_data = response.json()
+
+        except ValueError:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Invalid response "
+                        "received from WAAS."
+                    ),
+                    "waas_response": response.text,
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+    except requests.RequestException as exc:
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "Unable to connect to "
+                    "WAAS identity service."
+                ),
+                "details": str(exc),
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # --------------------------------------------------------
+    # CHECK WAAS STATUS
+    # --------------------------------------------------------
+
+    waas_status = str(
+        waas_data.get("status", "")
+    ).upper()
+
+    if waas_status not in ["SUCCESS", "PENDING"]:
+
+        user.verification_status = "Failed"
+
+        user.save(
+            update_fields=[
+                "verification_status"
+            ]
+        )
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": waas_data.get(
+                    "message",
+                    "WAAS identity verification failed.",
+                ),
+                "waas_response": waas_data,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # --------------------------------------------------------
+    # GET TRANSACTION REFERENCE FROM WAAS
+    # --------------------------------------------------------
+
+    transaction_ref = (
+        waas_data.get("transactionRef")
+        or waas_data.get("data", {}).get("transactionRef")
+        or transaction_ref
+    )
+
+    # --------------------------------------------------------
+    # SAVE TRANSACTION REFERENCE
+    # --------------------------------------------------------
+
+    user.identity_transaction_ref = transaction_ref
+
+    user.verification_status = (
+        "Completed"
+        if waas_status == "SUCCESS"
+        else "Ongoing"
+    )
+
+    user.save(
+        update_fields=[
+            "identity_transaction_ref",
+            "verification_status",
+        ]
+    )
+
+    print("======================================")
+    print("WAAS STATUS:", waas_status)
+    print("TRANSACTION REF:", transaction_ref)
+    print(
+        "SAVED DB REF:",
+        user.identity_transaction_ref
+    )
+    print(
+        "VERIFICATION STATUS:",
+        user.verification_status
+    )
+    print("======================================")
+
+    # --------------------------------------------------------
+    # FACIAL VERIFICATION
+    # --------------------------------------------------------
+
+    if (
+        verification_type.upper() == "FACIAL"
+        and waas_status == "SUCCESS"
+    ):
+
+        return open_waas_wallet(
+            user=user,
+            waas_token=waas_token,
+            transaction_ref=transaction_ref,
+        )
+
+    # --------------------------------------------------------
+    # OTP VERIFICATION
+    # --------------------------------------------------------
+
+    return Response(
+        {
+            "status": "PENDING",
+
+            "message": waas_data.get(
+                "message",
+                "WAAS OTP verification initiated.",
+            ),
+
+            "transaction_ref": transaction_ref,
+
+            "verification_type": verification_type,
+
+            "waas_response": waas_data,
+
+            "next_step": "verify_identity",
+        },
+        status=status.HTTP_200_OK,
+    )
+
+# ============================================================
+# VERIFY WAAS IDENTITY OTP
+# ============================================================
+
+class VerifyIdentityView(APIView):
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=VerifyIdentitySerializer,
+        responses={
+            201: OpenApiResponse(
+                OpenApiTypes.OBJECT,
+                description=(
+                    "Identity verified and wallet created."
+                ),
+            ),
+            400: OpenApiResponse(
+                description="Invalid OTP."
+            ),
+            404: OpenApiResponse(
+                description="Identity transaction not found."
+            ),
+            502: OpenApiResponse(
+                description="WAAS unavailable."
+            ),
+        },
+        tags=["Authentication"],
+    )
+    def post(self, request):
+
+        serializer = VerifyIdentitySerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        transaction_ref = (
+            serializer.validated_data[
+                "transaction_ref"
+            ]
+        )
+
+        otp = (
+            serializer.validated_data[
+                "otp"
+            ]
+        )
+
+        # ----------------------------------------------------
+        # FIND USER
+        # ----------------------------------------------------
+
+        try:
+
+            user = User.objects.get(
+                identity_transaction_ref=(
+                    transaction_ref
+                )
+            )
+
         except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Identity verification "
+                        "transaction was not found."
+                    ),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ----------------------------------------------------
+        # EMAIL MUST BE VERIFIED
+        # ----------------------------------------------------
+
+        if not user.is_active:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Email verification is "
+                        "required first."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ----------------------------------------------------
+        # ALREADY COMPLETED
+        # ----------------------------------------------------
+
+        if user.is_identity_verified:
+
+            return Response(
+                {
+                    "status": "SUCCESS",
+
+                    "message": (
+                        "Identity has already been "
+                        "verified and wallet created."
+                    ),
+
+                    "wallet_id": user.wallet_id,
+
+                    "account_number": (
+                        user.wallet_account_number
+                    ),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # ----------------------------------------------------
+        # WAAS AUTH
+        # ----------------------------------------------------
+
+        waas_token, auth_response = get_waas_token()
+
+        if not waas_token:
+
+            return Response(
+                {
+                    "status": "FAILED",
+
+                    "message": (
+                        "Unable to authenticate "
+                        "with WAAS."
+                    ),
+
+                    "waas_response": auth_response,
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # ----------------------------------------------------
+        # VERIFY OTP
+        # ----------------------------------------------------
+
+        verify_url = (
+            f"{WAAS_BASE_URL}/identity/verify-otp"
+        )
+
+        payload = {
+            "transactionRef": transaction_ref,
+            "otp": otp,
+        }
+
+        # ----------------------------------------------------
+        # IDENTITY DETAILS
+        # WAAS requires BVN or NIN
+        # ----------------------------------------------------
+
+        if user.bvn:
+            payload["bvn"] = str(user.bvn).strip()
+
+        if user.nin:
+            payload["nin"] = str(user.nin).strip()
 
 
+            
+        headers = {
+            "Authorization": f"Bearer {waas_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        # ----------------------------------------------------
+        # DEBUG
+        # ----------------------------------------------------
+
+        print("======================================")
+        print("WAAS IDENTITY VERIFY OTP")
+        print("URL:", verify_url)
+        print("TRANSACTION REF:", transaction_ref)
+        print("OTP:", otp)
+        print("BVN:", repr(user.bvn))
+        print("NIN:", repr(user.nin))
+        print("PAYLOAD:", payload)
+        print("======================================")
+
+        # ----------------------------------------------------
+        # CALL WAAS
+        # ----------------------------------------------------
+
+        try:
+
+            response = requests.post(
+                verify_url,
+                json=payload,
+                headers=headers,
+                timeout=60,
+            )
+
+            print("======================================")
+            print(
+                "WAAS VERIFY HTTP STATUS:",
+                response.status_code
+            )
+            print(
+                "WAAS VERIFY RAW RESPONSE:",
+                response.text
+            )
+            print("======================================")
+
+            try:
+
+                waas_data = response.json()
+
+            except ValueError:
+
+                return Response(
+                    {
+                        "status": "FAILED",
+                        "message": (
+                            "Invalid response "
+                            "received from WAAS."
+                        ),
+                        "waas_response": response.text,
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+        except requests.RequestException as exc:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Unable to connect to "
+                        "WAAS identity service."
+                    ),
+                    "details": str(exc),
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # ----------------------------------------------------
+        # OTP FAILED
+        # ----------------------------------------------------
+
+        if (
+            str(
+                waas_data.get("status", "")
+            ).upper()
+            != "SUCCESS"
+        ):
+
+            user.verification_status = "Failed"
+
+            user.save(
+                update_fields=[
+                    "verification_status"
+                ]
+            )
+
+            return Response(
+                {
+                    "status": "FAILED",
+
+                    "message": waas_data.get(
+                        "message",
+                        "Identity OTP verification failed.",
+                    ),
+
+                    "waas_response": waas_data,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
+        # OTP SUCCESS
+        #
+        # NOW OPEN WALLET
+        # ----------------------------------------------------
+
+        return open_waas_wallet(
+            user=user,
+            waas_token=waas_token,
+            transaction_ref=transaction_ref,
+        )
 
 
 #User = get_user_model()
@@ -584,7 +1549,7 @@ class TransferFundsView(APIView):
     },
     "transactionType": "INTRA_BANK",
     "merchant": {
-  "isFee": True,
+  "isFee": False,
   "merchantFeeAccount": "1100015137",
   "merchantFeeAmount": "9.25"
 }
@@ -1321,6 +2286,264 @@ class OtherBankAccountEnquiryView(APIView):
             }, status=200 if is_success else 400)
 
         except requests.RequestException as e:
+            return Response({
+                "status": "FAILED",
+                "message": str(e),
+                "data": None
+            }, status=503)
+
+
+
+class WalletDebitView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                timeout=30
+            )
+
+            resp.raise_for_status()
+
+            data = resp.json()
+            return data.get("accessToken")
+
+        except requests.RequestException:
+            return None
+
+    @extend_schema(
+        request=WalletDebitCreditSerializer
+    )
+    def post(self, request):
+
+        user = request.user
+
+        if not user.wallet_account_number:
+            return Response({
+                "status": "FAILED",
+                "message": "User does not have a wallet account.",
+                "data": None
+            }, status=400)
+
+        serializer = WalletDebitCreditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        amount = data["amount"]
+        narration = data["narration"]
+        transaction_id = data["transaction_id"]
+
+        # Get WAAS token
+        token = self.get_waas_token()
+
+        if not token:
+            return Response({
+                "status": "FAILED",
+                "message": "Authentication failed",
+                "data": None
+            }, status=401)
+
+        # Correct WAAS endpoint
+        url = "http://102.216.128.75:9090/waas/api/v1/debit/transfer"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        # WAAS debit payload
+        payload = {
+            "accountNo": user.wallet_account_number,
+            "totalAmount": str(amount),
+            "transactionId": transaction_id,
+            "narration": narration,
+            "merchant": {
+                "isFee": False
+            }
+        }
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+
+            print("=== WAAS DEBIT REQUEST ===")
+            print(payload)
+
+            print("=== WAAS DEBIT STATUS CODE ===")
+            print(resp.status_code)
+
+            print("=== WAAS DEBIT RESPONSE ===")
+            print(resp.text)
+
+            try:
+                waas_data = resp.json()
+            except ValueError:
+                return Response({
+                    "status": "FAILED",
+                    "message": "Invalid response from WAAS",
+                    "data": None
+                }, status=502)
+
+            # WAAS documentation says status is the primary
+            # field for determining success or failure.
+            waas_status = (waas_data.get("status") or "").upper()
+
+            is_success = (
+                resp.ok and
+                waas_status == "SUCCESS"
+            )
+
+            return Response({
+                "status": "SUCCESS" if is_success else "FAILED",
+                "message": waas_data.get("message"),
+                "data": waas_data.get("data") or waas_data
+            }, status=200 if is_success else 400)
+
+        except requests.RequestException as e:
+
+            return Response({
+                "status": "FAILED",
+                "message": str(e),
+                "data": None
+            }, status=503)
+
+class WalletCreditView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_waas_token(self):
+        url = "http://102.216.128.75:9090/waas/api/v1/authenticate"
+
+        payload = {
+            "username": settings.WAAS_USERNAME,
+            "password": settings.WAAS_PASSWORD,
+            "clientId": settings.WAAS_CLIENT_ID,
+            "clientSecret": settings.WAAS_CLIENT_SECRET,
+        }
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                timeout=30
+            )
+
+            resp.raise_for_status()
+
+            data = resp.json()
+            return data.get("accessToken")
+
+        except requests.RequestException:
+            return None
+
+    @extend_schema(
+        request=WalletDebitCreditSerializer
+    )
+    def post(self, request):
+
+        user = request.user
+
+        if not user.wallet_account_number:
+            return Response({
+                "status": "FAILED",
+                "message": "User does not have a wallet account.",
+                "data": None
+            }, status=400)
+
+        serializer = WalletDebitCreditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        amount = data["amount"]
+        narration = data["narration"]
+        transaction_id = data["transaction_id"]
+
+        # Get WAAS token
+        token = self.get_waas_token()
+
+        if not token:
+            return Response({
+                "status": "FAILED",
+                "message": "Authentication failed",
+                "data": None
+            }, status=401)
+
+        url = "http://102.216.128.75:9090/waas/api/v1/credit/transfer"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        payload = {
+            "accountNo": user.wallet_account_number,
+            "totalAmount": str(amount),
+            "transactionId": transaction_id,
+            "narration": narration,
+            "merchant": {
+                "isFee": False
+            }
+        }
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+
+            print("=== WAAS CREDIT REQUEST ===")
+            print(payload)
+
+            print("=== WAAS CREDIT STATUS CODE ===")
+            print(resp.status_code)
+
+            print("=== WAAS CREDIT RESPONSE ===")
+            print(resp.text)
+
+            try:
+                waas_data = resp.json()
+            except ValueError:
+                return Response({
+                    "status": "FAILED",
+                    "message": "Invalid response from WAAS",
+                    "data": None
+                }, status=502)
+
+            waas_status = (waas_data.get("status") or "").upper()
+
+            is_success = (
+                resp.ok and
+                waas_status == "SUCCESS"
+            )
+
+            return Response({
+                "status": "SUCCESS" if is_success else "FAILED",
+                "message": waas_data.get("message"),
+                "data": waas_data.get("data") or waas_data
+            }, status=200 if is_success else 400)
+
+        except requests.RequestException as e:
+
             return Response({
                 "status": "FAILED",
                 "message": str(e),

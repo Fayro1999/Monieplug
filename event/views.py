@@ -23,7 +23,55 @@ from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied
+from django.utils.dateparse import parse_datetime
 
+
+
+
+
+
+import uuid
+
+from decimal import Decimal
+
+from django.conf import settings
+from django.utils import timezone
+
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework import status
+
+from drf_spectacular.utils import extend_schema
+
+from .models import Ticket, TicketPurchase
+from .serializers import GuestPaystackCheckoutSerializer
+
+from .paystack import (
+    create_paystack_guest_charge,
+    calculate_platform_charge,
+)
+
+
+
+import hmac
+import hashlib
+import json
+
+from decimal import Decimal
+
+from django.conf import settings
+from django.db import transaction
+
+from django.http import HttpResponse
+
+from django.views.decorators.csrf import csrf_exempt
+
+from .models import TicketPurchase
+
+from .paystack import (
+    verify_paystack_signature,
+)
 
 
 
@@ -373,9 +421,18 @@ class EwalletCheckoutView(APIView):
             full_name=full_name,
             email=email,
             copies=copies,
-            total_price=total_amount,
             user=user,
+            total_price=total_amount,
+            platform_charge=platform_charge,
+            organizer_amount=vendor_amount,
+            debit_reference=...,
+            credit_reference=...,
+            payment_method="WAAS",
+            status="SUCCESS",
+            webhook_verified=True,
         )
+
+        purchase.generate_qr_codes()
 
         # -------------------------
         # EMAIL RECEIPT
@@ -447,31 +504,939 @@ class WAASBanksView(APIView):
 
 
 
+@extend_schema(
+    request=GuestPaystackCheckoutSerializer,
+    responses={
+        200: dict,
+        400: dict,
+        404: dict,
+    },
+)
+class GuestPaystackCheckoutView(APIView):
+    """
+    Guest / unregistered customer checkout using Paystack
+    Pay with Transfer.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        serializer = GuestPaystackCheckoutSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        ticket_id = serializer.validated_data["ticket_id"]
+        copies = serializer.validated_data["copies"]
+        full_name = serializer.validated_data["full_name"]
+        email = serializer.validated_data["email"]
+
+        # -----------------------------------
+        # GET TICKET
+        # -----------------------------------
+
+        try:
+            ticket = Ticket.objects.select_related(
+                "event",
+                "event__organizer",
+            ).get(id=ticket_id)
+
+        except Ticket.DoesNotExist:
+            return Response(
+                {
+                    "error": "Invalid ticket."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # -----------------------------------
+        # ORGANIZER
+        # -----------------------------------
+
+        vendor = ticket.event.organizer
+
+        if not vendor.wallet_account_number:
+            return Response(
+                {
+                    "error": "Organizer wallet is not configured."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # -----------------------------------
+        # CALCULATE AMOUNT
+        # -----------------------------------
+
+        total_amount = (
+            Decimal(ticket.price) * Decimal(copies)
+        )
+
+        platform_charge = calculate_platform_charge(
+            total_amount
+        )
+
+        vendor_amount = (
+            total_amount - platform_charge
+        )
+
+        if vendor_amount <= Decimal("0"):
+            return Response(
+                {
+                    "error": "Invalid payment amount."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # -----------------------------------
+        # CREATE LOCAL PURCHASE
+        # -----------------------------------
+
+        purchase = TicketPurchase.objects.create(
+            ticket=ticket,
+            full_name=full_name,
+            email=email,
+            copies=copies,
+            total_price=total_amount,
+            platform_charge=platform_charge,
+            organizer_amount=vendor_amount,
+            payment_method="PAYSTACK",
+            status="PENDING",
+            user=None,
+        )
+        # -----------------------------------
+        # PAYSTACK REFERENCE
+        # -----------------------------------
+
+        paystack_reference = (
+            f"mp-event-{purchase.reference_id.hex}"
+        )
+
+        # -----------------------------------
+        # EXPIRY
+        # -----------------------------------
+
+        expiry_minutes = getattr(
+            settings,
+            "PAYSTACK_PWT_EXPIRY_MINUTES",
+            30,
+        )
+
+        expires_at = (
+            timezone.now()
+            + timezone.timedelta(
+                minutes=expiry_minutes
+            )
+        )
+
+        expires_at_string = (
+            expires_at
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+        # -----------------------------------
+        # PAYSTACK CHARGE
+        # -----------------------------------
+
+        result = create_paystack_guest_charge(
+            email=email,
+            amount=total_amount,
+            reference=paystack_reference,
+            expires_at=expires_at_string,
+            metadata={
+                "purchase_id": str(
+                    purchase.reference_id
+                ),
+                "ticket_id": str(ticket.id),
+                "event_id": str(ticket.event.id),
+                "organizer_amount": str(vendor_amount),
+                "customer_type": "guest",
+            },
+        )
+
+        if not result["success"]:
+
+            purchase.delete()
+
+            return Response(
+                {
+                    "error": result["message"],
+                    "paystack_response": result.get(
+                        "response"
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        paystack_data = result["data"]
+
+        # -----------------------------------
+        # SAVE PAYSTACK DETAILS
+        # -----------------------------------
+
+        purchase.paystack_reference = paystack_reference
+
+        purchase.paystack_account_number = (
+            paystack_data.get("account_number")
+        )
+
+        purchase.paystack_account_name = (
+            paystack_data.get("account_name")
+        )
+
+        bank = paystack_data.get("bank", {})
+
+        purchase.paystack_bank = (
+            bank.get("name")
+            if isinstance(bank, dict)
+            else bank
+        )
+
+        account_expires_at = paystack_data.get(
+            "account_expires_at"
+        )
+
+        if account_expires_at:
+            account_expires_at = parse_datetime(
+                account_expires_at
+            )
+
+        purchase.paystack_account_expires_at = (
+            account_expires_at
+        )
+
+        purchase.save()
+        # -----------------------------------
+        # RESPONSE
+        # -----------------------------------
+
+        return Response(
+            {
+                "message": (
+                    "Payment account generated. "
+                    "Transfer the exact amount before expiry."
+                ),
+                "payment_method": "PAYSTACK",
+                "customer_type": "GUEST",
+
+                "purchase_reference": str(
+                    purchase.reference_id
+                ),
+
+                "paystack_reference": (
+                    paystack_reference
+                ),
+
+                "event": ticket.event.title,
+
+                "ticket": ticket.name,
+
+                "copies": copies,
+
+                "amount": str(
+                    total_amount
+                ),
+
+                "platform_charge": str(
+                    platform_charge
+                ),
+
+                "vendor_amount": str(
+                    vendor_amount
+                ),
+
+                "bank": (
+                    paystack_data.get("bank", {})
+                ),
+
+                "account_name": (
+                    paystack_data.get(
+                        "account_name"
+                    )
+                ),
+
+                "account_number": (
+                    paystack_data.get(
+                        "account_number"
+                    )
+                ),
+
+                "account_expires_at": (
+                    paystack_data.get(
+                        "account_expires_at"
+                    )
+                ),
+
+                "status": "pending_bank_transfer",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+def send_ticket_email(purchase):
+    """
+    Send successful event ticket email with QR codes attached.
+    """
+
+    ticket = purchase.ticket
+    event = ticket.event
+
+    subject = f"Ticket - {event.title}"
+
+    body = f"""
+Hello {purchase.full_name},
+
+Your payment was successful.
+
+Event: {event.title}
+Ticket: {ticket.name}
+Copies: {purchase.copies}
+
+Total Paid: ₦{purchase.total_price}
+Platform Fee: ₦{purchase.platform_charge}
+Organizer Amount: ₦{purchase.organizer_amount}
+
+Purchase Reference:
+{purchase.reference_id}
+
+Thank you for using Monieplug.
+"""
+
+    email = EmailMessage(
+        subject=subject,
+        body=body,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[purchase.email],
+    )
+
+    # ------------------------------------------------------------
+    # Attach generated QR codes
+    # ------------------------------------------------------------
+
+    for qr_file in purchase.qr_codes:
+
+        try:
+            file_content = default_storage.open(
+                qr_file,
+                "rb",
+            ).read()
+
+            filename = os.path.basename(qr_file)
+
+            email.attach(
+                filename,
+                file_content,
+                "image/png",
+            )
+
+        except Exception:
+            continue
+
+    email.send(fail_silently=False)  
+
+
+
+def initiate_organizer_payout(purchase):
+    """
+    Initiate Paystack payout to the event organizer.
+
+    Customer payment:
+        ₦5,000
+
+    Example:
+        Platform fee = ₦150
+        Organizer = ₦4,850
+    """
+
+    organizer = purchase.ticket.event.organizer
+
+    # --------------------------------------------------------
+    # Already paid
+    # --------------------------------------------------------
+
+    if purchase.payout_status == "SUCCESS":
+        return {
+            "success": True,
+            "message": "Organizer payout already completed.",
+        }
+
+    # --------------------------------------------------------
+    # Already processing
+    # --------------------------------------------------------
+
+    if (
+        purchase.payout_status == "PROCESSING"
+        and purchase.paystack_transfer_reference
+    ):
+        return {
+            "success": True,
+            "message": "Organizer payout already processing.",
+        }
+
+    # --------------------------------------------------------
+    # Organizer must have Paystack recipient
+    # --------------------------------------------------------
+
+    recipient_code = getattr(
+        organizer,
+        "paystack_recipient_code",
+        None,
+    )
+
+    if not recipient_code:
+        purchase.payout_status = "FAILED"
+        purchase.payout_error = (
+            "Organizer does not have a Paystack transfer recipient."
+        )
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return {
+            "success": False,
+            "message": "Organizer Paystack recipient is missing.",
+        }
+
+    # --------------------------------------------------------
+    # Validate payout amount
+    # --------------------------------------------------------
+
+    organizer_amount = Decimal(
+        str(purchase.organizer_amount)
+    )
+
+    if organizer_amount <= Decimal("0"):
+        purchase.payout_status = "FAILED"
+        purchase.payout_error = (
+            "Organizer payout amount is invalid."
+        )
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return {
+            "success": False,
+            "message": "Invalid organizer payout amount.",
+        }
+
+    # --------------------------------------------------------
+    # Generate UNIQUE Paystack transfer reference
+    # --------------------------------------------------------
+
+    transfer_reference = (
+        f"mp_payout_{uuid.uuid4().hex}"
+    )
+
+    # 35-ish characters, comfortably inside
+    # Paystack's 16-50 character requirement.
+    # --------------------------------------------------------
+
+    purchase.paystack_transfer_reference = (
+        transfer_reference
+    )
+
+    purchase.payout_status = "PROCESSING"
+    purchase.payout_error = ""
+
+    purchase.save(
+        update_fields=[
+            "paystack_transfer_reference",
+            "payout_status",
+            "payout_error",
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Initiate Paystack transfer
+    # --------------------------------------------------------
+
+    result = create_paystack_transfer(
+        recipient_code=recipient_code,
+        amount=organizer_amount,
+        reference=transfer_reference,
+        reason=(
+            f"Monieplug payout - "
+            f"{purchase.ticket.event.title}"
+        ),
+    )
+
+    if not result["success"]:
+
+        purchase.payout_status = "FAILED"
+        purchase.payout_error = result.get(
+            "message",
+            "Paystack transfer failed.",
+        )
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return result
+
+    return result
+
+
+
 @csrf_exempt
 def paystack_webhook(request):
-    signature = request.headers.get("x-paystack-signature")
 
-    computed = hmac.new(
-        settings.PAYSTACK_SECRET_KEY.encode(),
-        request.body,
-        hashlib.sha512
-    ).hexdigest()
+    # ============================================================
+    # ONLY POST
+    # ============================================================
 
-    if signature != computed:
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    # ============================================================
+    # VERIFY PAYSTACK SIGNATURE
+    # ============================================================
+
+    if not verify_paystack_signature(request):
+        return HttpResponse(status=401)
+
+    # ============================================================
+    # PARSE JSON
+    # ============================================================
+
+    try:
+        payload = json.loads(request.body)
+
+    except (json.JSONDecodeError, TypeError):
         return HttpResponse(status=400)
 
-    payload = json.loads(request.body)
-
     event = payload.get("event")
-    data = payload.get("data", {})
+    data = payload.get("data") or {}
+
+    # ============================================================
+    # CUSTOMER PAYMENT SUCCESS
+    # ============================================================
 
     if event == "charge.success":
+
         reference = data.get("reference")
 
-        # VERY IMPORTANT: never trigger payout blindly
-        # Only mark verified or enqueue processing
-        TicketPurchase.objects.filter(
-            paystack_reference=reference
-        ).update(webhook_verified=True)
+        if not reference:
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # FIND PURCHASE
+        # --------------------------------------------------------
+
+        try:
+            purchase = (
+                TicketPurchase.objects
+                .select_related(
+                    "ticket",
+                    "ticket__event",
+                    "ticket__event__organizer",
+                )
+                .get(
+                    paystack_reference=reference
+                )
+            )
+
+        except TicketPurchase.DoesNotExist:
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # IDEMPOTENCY
+        # --------------------------------------------------------
+
+        if (
+            purchase.webhook_verified
+            and purchase.status == "SUCCESS"
+        ):
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # VERIFY PAYSTACK STATUS
+        # --------------------------------------------------------
+
+        if data.get("status") != "success":
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # VERIFY CURRENCY
+        # --------------------------------------------------------
+
+        if data.get("currency") != "NGN":
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # VERIFY REFERENCE
+        # --------------------------------------------------------
+
+        if data.get("reference") != (
+            purchase.paystack_reference
+        ):
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # VERIFY AMOUNT FROM WEBHOOK
+        # --------------------------------------------------------
+
+        try:
+
+            paid_amount = (
+                Decimal(
+                    str(
+                        data.get(
+                            "amount",
+                            "0",
+                        )
+                    )
+                )
+                / Decimal("100")
+            )
+
+        except Exception:
+            return HttpResponse(status=200)
+
+        expected_amount = Decimal(
+            str(purchase.total_price)
+        )
+
+        if paid_amount != expected_amount:
+            return HttpResponse(status=200)
+
+        # ========================================================
+        # SECONDARY PAYSTACK VERIFICATION
+        # ========================================================
+
+        verification = verify_paystack_transaction(
+            reference
+        )
+
+        if not verification.get("success"):
+            # Returning 500 allows Paystack to retry.
+            return HttpResponse(status=500)
+
+        verified_data = (
+            verification.get("data") or {}
+        )
+
+        if verified_data.get("status") != "success":
+            return HttpResponse(status=200)
+
+        if verified_data.get("currency") != "NGN":
+            return HttpResponse(status=200)
+
+        try:
+
+            verified_amount = (
+                Decimal(
+                    str(
+                        verified_data.get(
+                            "amount",
+                            "0",
+                        )
+                    )
+                )
+                / Decimal("100")
+            )
+
+        except Exception:
+            return HttpResponse(status=200)
+
+        if verified_amount != expected_amount:
+            return HttpResponse(status=200)
+
+        # ========================================================
+        # MARK PURCHASE SUCCESSFUL
+        # ========================================================
+
+        try:
+
+            with transaction.atomic():
+
+                purchase = (
+                    TicketPurchase.objects
+                    .select_for_update()
+                    .select_related(
+                        "ticket",
+                        "ticket__event",
+                        "ticket__event__organizer",
+                    )
+                    .get(
+                        pk=purchase.pk
+                    )
+                )
+
+                # Another webhook may have completed it.
+                if (
+                    purchase.webhook_verified
+                    and purchase.status == "SUCCESS"
+                ):
+                    return HttpResponse(
+                        status=200
+                    )
+
+                purchase.webhook_verified = True
+                purchase.status = "SUCCESS"
+
+                purchase.save(
+                    update_fields=[
+                        "webhook_verified",
+                        "status",
+                    ]
+                )
+
+        except TicketPurchase.DoesNotExist:
+            return HttpResponse(status=200)
+
+        except Exception:
+            return HttpResponse(status=500)
+
+        # ========================================================
+        # GENERATE QR CODES
+        # ========================================================
+
+        try:
+
+            purchase.generate_qr_codes()
+
+        except Exception:
+            # Payment is successful but ticket generation
+            # failed. Returning 500 allows webhook retry.
+            return HttpResponse(status=500)
+
+        # ========================================================
+        # SEND TICKET EMAIL
+        # ========================================================
+
+        try:
+
+            send_ticket_email(
+                purchase
+            )
+
+        except Exception:
+            # Email failure must NOT make a successful
+            # payment look unsuccessful.
+            pass
+
+        # ========================================================
+        # INITIATE ORGANIZER PAYOUT
+        # ========================================================
+
+        payout_result = initiate_organizer_payout(
+            purchase
+        )
+
+        # --------------------------------------------------------
+        # IMPORTANT:
+        #
+        # A failed payout does NOT mean the customer payment
+        # failed.
+        #
+        # The purchase remains SUCCESS.
+        #
+        # payout_status tells us separately what happened.
+        # --------------------------------------------------------
+
+        return HttpResponse(status=200)
+
+    # ============================================================
+    # ORGANIZER PAYOUT SUCCESS
+    # ============================================================
+
+    if event == "transfer.success":
+
+        transfer_reference = data.get(
+            "reference"
+        )
+
+        if not transfer_reference:
+            return HttpResponse(status=200)
+
+        try:
+
+            purchase = (
+                TicketPurchase.objects
+                .get(
+                    paystack_transfer_reference=(
+                        transfer_reference
+                    )
+                )
+            )
+
+        except TicketPurchase.DoesNotExist:
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # IDEMPOTENCY
+        # --------------------------------------------------------
+
+        if purchase.payout_status == "SUCCESS":
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # Verify currency
+        # --------------------------------------------------------
+
+        if data.get("currency") not in (
+            None,
+            "NGN",
+        ):
+            return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # Verify amount if supplied
+        # --------------------------------------------------------
+
+        if data.get("amount") is not None:
+
+            try:
+
+                transferred_amount = (
+                    Decimal(
+                        str(
+                            data.get(
+                                "amount"
+                            )
+                        )
+                    )
+                    / Decimal("100")
+                )
+
+                expected_payout = Decimal(
+                    str(
+                        purchase.organizer_amount
+                    )
+                )
+
+                if transferred_amount != expected_payout:
+                    return HttpResponse(
+                        status=200
+                    )
+
+            except Exception:
+                return HttpResponse(status=200)
+
+        # --------------------------------------------------------
+        # SUCCESS
+        # --------------------------------------------------------
+
+        purchase.payout_status = "SUCCESS"
+        purchase.payout_error = ""
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return HttpResponse(status=200)
+
+    # ============================================================
+    # ORGANIZER PAYOUT FAILED
+    # ============================================================
+
+    if event == "transfer.failed":
+
+        transfer_reference = data.get(
+            "reference"
+        )
+
+        if not transfer_reference:
+            return HttpResponse(status=200)
+
+        try:
+
+            purchase = (
+                TicketPurchase.objects
+                .get(
+                    paystack_transfer_reference=(
+                        transfer_reference
+                    )
+                )
+            )
+
+        except TicketPurchase.DoesNotExist:
+            return HttpResponse(status=200)
+
+        # Never downgrade an already-successful payout.
+        if purchase.payout_status == "SUCCESS":
+            return HttpResponse(status=200)
+
+        failure_message = (
+            data.get("reason")
+            or data.get("message")
+            or "Paystack transfer failed."
+        )
+
+        purchase.payout_status = "FAILED"
+        purchase.payout_error = str(
+            failure_message
+        )
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return HttpResponse(status=200)
+
+    # ============================================================
+    # ORGANIZER PAYOUT REVERSED
+    # ============================================================
+
+    if event == "transfer.reversed":
+
+        transfer_reference = data.get(
+            "reference"
+        )
+
+        if not transfer_reference:
+            return HttpResponse(status=200)
+
+        try:
+
+            purchase = (
+                TicketPurchase.objects
+                .get(
+                    paystack_transfer_reference=(
+                        transfer_reference
+                    )
+                )
+            )
+
+        except TicketPurchase.DoesNotExist:
+            return HttpResponse(status=200)
+
+        purchase.payout_status = "REVERSED"
+        purchase.payout_error = (
+            "Paystack reversed the organizer payout."
+        )
+
+        purchase.save(
+            update_fields=[
+                "payout_status",
+                "payout_error",
+            ]
+        )
+
+        return HttpResponse(status=200)
+
+    # ============================================================
+    # UNKNOWN / UNUSED PAYSTACK EVENT
+    # ============================================================
 
     return HttpResponse(status=200)

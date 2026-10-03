@@ -86,3 +86,21 @@ class TicketPurchaseSerializer(serializers.ModelSerializer):
         validated_data['total_price'] = ticket.price * copies
 
         return super().create(validated_data)
+
+
+
+
+class GuestPaystackCheckoutSerializer(serializers.Serializer):
+
+    ticket_id = serializers.IntegerField()
+
+    copies = serializers.IntegerField(
+        min_value=1,
+        default=1,
+    )
+
+    full_name = serializers.CharField(
+        max_length=255,
+    )
+
+    email = serializers.EmailField()

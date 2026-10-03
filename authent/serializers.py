@@ -1,6 +1,7 @@
 # authent/serializers.py
 from rest_framework import serializers
 from .models import User
+from decimal import Decimal
 
 
 class SignupSerializer(serializers.Serializer):
@@ -18,12 +19,46 @@ class SignupSerializer(serializers.Serializer):
 
     # Optional fields for WAAS wallet
     nin_user_id = serializers.CharField(max_length=11, required=False, allow_blank=True)
-    bvn = serializers.CharField(max_length=11, required=False, allow_blank=True)
+    nin = serializers.CharField(max_length=11, required=False, allow_blank=True)
     next_of_kin_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     next_of_kin_phone = serializers.CharField(max_length=15, required=False, allow_blank=True)
     referral_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     referral_phone = serializers.CharField(max_length=15, required=False, allow_blank=True)
+    bvn = serializers.CharField(max_length=11,required=False,allow_blank=True)
+    # ========================================================
+    # VERIFICATION MODE 
+    # ========================================================
+    verification_type = serializers.ChoiceField( choices=[ ("OTP", "OTP"), ("FACIAL", "FACIAL"), ], default="OTP" )
+     # Required only when verification_type = FACIAL
+    image = serializers.CharField( required=False, allow_blank=True, write_only=True )
     email_verification_code = serializers.CharField(max_length=6, read_only=True)
+
+    def validate(self, attrs): 
+        bvn = attrs.get("bvn") 
+        nin = attrs.get("nin") 
+        verification_type = attrs.get("verification_type", "OTP")
+        image = attrs.get("image") 
+         # WAAS requires either BVN or NIN 
+        if not bvn and not nin: 
+            raise serializers.ValidationError( 
+                "Either BVN or NIN is required."
+                 )
+
+
+        # FACIAL verification requires Base64 image
+        if verification_type == "FACIAL" and not image:
+            raise serializers.ValidationError(
+                "An image is required for FACIAL verification." 
+                ) 
+                
+        return attrs
+
+
+# WAAS IDENTITY OTP VERIFICATION # ============================================================
+class VerifyIdentitySerializer(serializers.Serializer):
+    transaction_ref = serializers.CharField( max_length=100 )
+    otp = serializers.CharField( min_length=6, max_length=6 )
+
 
 class VerifyEmailSerializer(serializers.Serializer):
     code = serializers.CharField()
@@ -118,3 +153,20 @@ class OtherBankEnquiryResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     message = serializers.CharField()
     data = serializers.JSONField()
+
+
+class WalletDebitCreditSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0.01")
+    )
+
+    narration = serializers.CharField(
+        max_length=100
+    )
+
+    transaction_id = serializers.CharField(
+        max_length=25,
+        required=True
+    )

@@ -1,27 +1,35 @@
 from django.urls import path
+
 from .views import (
     VendorQRCodeCreateView,
     Scan2PayCheckoutView,
-    Scan2PayUnregisteredView
+    Scan2PayPaystackView,
+    PaystackWebhookView,
 )
 
 urlpatterns = [
+
     path(
-        "vendor/qrcode/create/",
+        "qr/create/",
         VendorQRCodeCreateView.as_view(),
-        name="vendor_qrcode_create"
+        name="scan2pay-qr-create",
     ),
 
-    # ✅ FIXED: QR must pass ID
     path(
         "checkout/<int:qr_id>/",
         Scan2PayCheckoutView.as_view(),
-        name="scan2pay_checkout"
+        name="scan2pay-wallet-checkout",
     ),
 
     path(
-        "unregistered/",
-        Scan2PayUnregisteredView.as_view(),
-        name="scan2pay_unregistered"
+        "checkout/paystack/<int:qr_id>/",
+        Scan2PayPaystackView.as_view(),
+        name="scan2pay-paystack-checkout",
+    ),
+
+    path(
+        "paystack/webhook/",
+        PaystackWebhookView.as_view(),
+        name="scan2pay-paystack-webhook",
     ),
 ]
