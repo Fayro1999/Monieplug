@@ -3,6 +3,7 @@ from .models import User
 from decimal import Decimal
 
 
+
 class SignupSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=50)
     last_name = serializers.CharField(max_length=50)

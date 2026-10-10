@@ -13,18 +13,21 @@ from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny,IsAuthenticated
-from rest_framework import status
+from rest_framework import status,serializers
 
 from drf_spectacular.utils import (
     extend_schema,
     OpenApiResponse,
     OpenApiTypes,
+    OpenApiExample,
+    inline_serializer,
 )
 
 from .models import User
 
 from .serializers import (
     SignupSerializer,
+    InitiateIdentityVerificationSerializer,
     VerifyEmailSerializer,
     VerifyIdentitySerializer,
     LoginSerializer,
@@ -792,20 +795,135 @@ class VerifyEmail(APIView):
 class InitiateIdentityVerification(APIView):
 
     permission_classes = [AllowAny]
+    
 
+    
     @extend_schema(
-        request=OpenApiTypes.OBJECT,
+        operation_id="initiate_identity_verification",
+        summary="Initiate BVN or NIN Verification",
+        description=(
+            "Initiates identity verification through WAAS. "
+            "The user must verify their email first.\n\n"
+            "The user selects an identity type and verification method:\n"
+            "- Identity type: BVN or NIN.\n"
+            "- Verification method: OTP or FACIAL.\n\n"
+            "Both verification methods can be used with either BVN or NIN.\n\n"
+            "Send verification_type as either OTP or FACIAL. "
+            "For FACIAL verification, provide the Base64-encoded facial "
+            "image in the image field. The image is required for FACIAL "
+            "verification and is not required for OTP verification."
+        ),
+        request=inline_serializer(
+            name="InitiateIdentityVerificationRequest",
+            fields={
+                "user_id": serializers.UUIDField(
+                    help_text="UUID returned by the signup endpoint."
+                ),
+                "identity_type": serializers.ChoiceField(
+                    choices=["BVN", "NIN"],
+                    help_text="Select BVN or NIN."
+                ),
+                "verification_type": serializers.ChoiceField(
+                    choices=["OTP", "FACIAL"],
+                    help_text=(
+                        "Select OTP or FACIAL. Either method can be "
+                        "used with BVN or NIN."
+                    )
+                ),
+                "identity_number": serializers.CharField(
+                    max_length=11,
+                    min_length=11,
+                    help_text="The selected BVN or NIN number."
+                ),
+                "image": serializers.CharField(
+                    required=False,
+                    allow_blank=False,
+                    help_text=(
+                        "Base64-encoded facial image. Required when "
+                        "verification_type is FACIAL; not required for OTP."
+                    )
+                ),
+            },
+        ),
+        examples=[
+            OpenApiExample(
+                "BVN with OTP",
+                value={
+                    "user_id": "43f6540f-9c96-43d0-8a35-443a05de5808",
+                    "identity_type": "BVN",
+                    "verification_type": "OTP",
+                    "identity_number": "22345678901",
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "BVN with FACIAL",
+                value={
+                    "user_id": "43f6540f-9c96-43d0-8a35-443a05de5808",
+                    "identity_type": "BVN",
+                    "verification_type": "FACIAL",
+                    "identity_number": "22345678901",
+                    "image": "BASE64_ENCODED_IMAGE",
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "NIN with OTP",
+                value={
+                    "user_id": "43f6540f-9c96-43d0-8a35-443a05de5808",
+                    "identity_type": "NIN",
+                    "verification_type": "OTP",
+                    "identity_number": "12345678901",
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "NIN with FACIAL",
+                value={
+                    "user_id": "43f6540f-9c96-43d0-8a35-443a05de5808",
+                    "identity_type": "NIN",
+                    "verification_type": "FACIAL",
+                    "identity_number": "12345678901",
+                    "image": "BASE64_ENCODED_IMAGE",
+                },
+                request_only=True,
+            ),
+        ],
         responses={
             200: OpenApiResponse(
-                OpenApiTypes.OBJECT,
+                response=OpenApiTypes.OBJECT,
                 description=(
-                    "WAAS identity verification "
-                    "initiated."
+                    "Identity verification is already completed, or "
+                    "verification was initiated successfully. The response "
+                    "depends on the WAAS result."
                 ),
+            ),
+            201: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                description=(
+                    "Identity verification completed and the wallet "
+                    "was opened successfully, if returned by the view."
+                ),
+            ),
+            400: OpenApiResponse(
+                description=(
+                    "Invalid identity type, verification method, identity "
+                    "number, missing facial image for FACIAL verification, "
+                    "or invalid request."
+                ),
+            ),
+            403: OpenApiResponse(
+                description="Email verification is required first.",
+            ),
+            404: OpenApiResponse(
+                description="User was not found.",
+            ),
+            502: OpenApiResponse(
+                description="WAAS could not complete the request.",
             ),
         },
         tags=["Authentication"],
-    )
+        )
     def post(self, request):
 
         # ----------------------------------------------------
