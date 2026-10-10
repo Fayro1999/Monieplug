@@ -9,11 +9,12 @@ from django.core.cache import cache
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
-
+from django.contrib.auth.hashers import make_password, check_password
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework import status,serializers
+from django.contrib.auth import get_user_model, authenticate
 
 from drf_spectacular.utils import (
     extend_schema,
@@ -44,6 +45,56 @@ from .serializers import (
     OtherBankEnquiryResponseSerializer,
     WalletDebitCreditSerializer,
 )
+
+
+# authent/views.py
+
+import random
+import uuid
+import requests
+
+from django.conf import settings
+from django.core.cache import cache
+from django.core.mail import send_mail
+from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import make_password, check_password
+from django.db import transaction
+from django.utils import timezone
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.authtoken.models import Token
+from rest_framework import status
+
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiResponse,
+    OpenApiTypes,
+)
+
+from .models import User
+from .serializers import (
+    SignupSerializer,
+    VerifyEmailSerializer,
+    VerifyIdentitySerializer,
+    LoginSerializer,
+    SetTransactionPinSerializer,
+    ForgotPasswordSerializer,
+    ResetPasswordSerializer,
+    TransferFundsSerializer,
+    VerifyAccountSerializer,
+    GetBalanceSerializer,
+    UserSerializer,
+    WalletTransactionHistorySerializer,
+    WalletTransactionHistoryResponseSerializer,
+    OtherBankEnquirySerializer,
+    OtherBankEnquiryResponseSerializer,
+    WalletDebitCreditSerializer,
+)
+
+
+# 
 
 
 # ============================================================

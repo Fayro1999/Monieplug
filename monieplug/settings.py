@@ -120,7 +120,7 @@ DATABASES = {
 
 DATABASES = {
     'default': dj_database_url.config(
-        default='postgresql://monieplug_q5gk_user:Kh4e8AYm1uocH3Ff0i7v1y3bhGNZ7lDG@dpg-dahsmc7qj5pc73ad3qr0-a.oregon-postgres.render.com/monieplug_q5gk',
+        default='postgresql://fixx_user:fVCXqkx3QPnDU1r1kyajMuYcRChQtbXW@dpg-db52s7rrjlhs73c7qg30-a.oregon-postgres.render.com/fixx',
         conn_max_age=600,
         ssl_require=True   # 👈 This line forces SSL
     )
