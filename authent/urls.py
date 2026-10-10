@@ -20,11 +20,14 @@ from .views import (
     WalletDebitView,
     WalletCreditView,
     VerifyIdentityView,
+    InitiateIdentityVerification,
 )
 
 urlpatterns = [
     path("signup/", SignupAndOpenWallet.as_view(), name="signup"),
     path("verify-email/", VerifyEmail.as_view(), name="verify_email"),
+    path( "initiate-identity/",InitiateIdentityVerification.as_view(),name="initiate_identity"),
+    path("verify-identity/", VerifyIdentityView.as_view(), name="verify_identity"),
     path("login/", Login.as_view(), name="login"),
     path("set-pin/", SetTransactionPin.as_view(), name="set_pin"),
     path("forgot-password/", ForgotPassword.as_view(), name="forgot_password"),
@@ -41,5 +44,4 @@ urlpatterns = [
     path("check-transaction-pin/",CheckTransactionPin.as_view(), name="CheckTransactionPin"),
     path("wallet/debit/", WalletDebitView.as_view(), name="wallet-debit"),
     path("wallet/credit/", WalletCreditView.as_view(), name="wallet-credit"),
-    path("verify-identity/", VerifyIdentityView.as_view(), name="verify_identity"),
-]
+    ]

@@ -7,15 +7,12 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.core.mail import send_mail
-from django.contrib.auth import authenticate
-from django.contrib.auth.hashers import make_password, check_password
 from django.db import transaction
 from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.authtoken.models import Token
+from rest_framework.permissions import AllowAny,IsAuthenticated
 from rest_framework import status
 
 from drf_spectacular.utils import (
@@ -25,6 +22,7 @@ from drf_spectacular.utils import (
 )
 
 from .models import User
+
 from .serializers import (
     SignupSerializer,
     VerifyEmailSerializer,
@@ -81,6 +79,7 @@ def get_waas_token():
 
         try:
             data = response.json()
+
         except ValueError:
             data = {
                 "message": response.text
@@ -109,7 +108,11 @@ def get_waas_token():
 # OPEN WAAS WALLET
 # ============================================================
 
-def open_waas_wallet(user, waas_token, transaction_ref):
+def open_waas_wallet(
+    user,
+    waas_token,
+    transaction_ref,
+):
 
     wallet_url = f"{WAAS_BASE_URL}/open_wallet"
 
@@ -149,15 +152,21 @@ def open_waas_wallet(user, waas_token, transaction_ref):
 
     if user.nin:
 
-        wallet_payload["nationalIdentityNo"] = user.nin
+        wallet_payload["nationalIdentityNo"] = (
+            str(user.nin).strip()
+        )
 
     if user.nin_user_id:
 
-        wallet_payload["ninUserId"] = user.nin_user_id
+        wallet_payload["ninUserId"] = (
+            str(user.nin_user_id).strip()
+        )
 
     if user.bvn:
 
-        wallet_payload["bvn"] = user.bvn
+        wallet_payload["bvn"] = (
+            str(user.bvn).strip()
+        )
 
     # --------------------------------------------------------
     # NEXT OF KIN
@@ -211,6 +220,7 @@ def open_waas_wallet(user, waas_token, transaction_ref):
         )
 
         try:
+
             wallet_data = response.json()
 
         except ValueError:
@@ -283,13 +293,17 @@ def open_waas_wallet(user, waas_token, transaction_ref):
     )
 
     wallet_name = (
-    account_info.get("accountName")
-    or account_info.get("fullName")
-    or f"MONIEPLUG/{user.first_name} {user.last_name}"
+        account_info.get("accountName")
+        or account_info.get("fullName")
+        or (
+            f"MONIEPLUG/"
+            f"{user.first_name} "
+            f"{user.last_name}"
+        )
     )
 
     # --------------------------------------------------------
-    # SUCCESS WITHOUT ACCOUNT NUMBER = NOT COMPLETE
+    # SUCCESS WITHOUT ACCOUNT NUMBER
     # --------------------------------------------------------
 
     if not account_number:
@@ -334,6 +348,7 @@ def open_waas_wallet(user, waas_token, transaction_ref):
             "is_identity_verified",
             "verification_status",
             "identity_verified_at",
+            "facial_image",
         ]
     )
 
@@ -450,26 +465,6 @@ class SignupAndOpenWallet(APIView):
             )
 
         # ----------------------------------------------------
-        # BVN OR NIN REQUIRED
-        # ----------------------------------------------------
-
-        bvn = data.get("bvn")
-
-        nin = data.get("nin")
-
-        if not bvn and not nin:
-
-            return Response(
-                {
-                    "status": "FAILED",
-                    "message": (
-                        "BVN or NIN is required."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # ----------------------------------------------------
         # EMAIL VERIFICATION CODE
         # ----------------------------------------------------
 
@@ -481,6 +476,11 @@ class SignupAndOpenWallet(APIView):
         # CREATE USER
         #
         # IMPORTANT:
+        #
+        # BVN/NIN ARE NOT COLLECTED HERE.
+        #
+        # OTP/FACIAL ARE NOT SELECTED HERE.
+        #
         # WAAS IS NOT CALLED HERE.
         # ----------------------------------------------------
 
@@ -506,13 +506,9 @@ class SignupAndOpenWallet(APIView):
 
                     address=data["address"],
 
-                    bvn=bvn,
-
-                    nin=nin,
-
-                    nin_user_id=data.get(
-                        "nin_user_id"
-                    ),
+                    # ------------------------------------------------
+                    # DO NOT PASS BVN/NIN HERE
+                    # ------------------------------------------------
 
                     next_of_kin_name=data.get(
                         "next_of_kin_name"
@@ -540,19 +536,16 @@ class SignupAndOpenWallet(APIView):
 
                     verification_status="Pending",
 
-                    verification_mode=data.get(
-                        "verification_type",
-                        "OTP"
-                    ),
+                    # Identity method has NOT been selected yet.
+                    verification_mode=None,
 
-                    facial_image=(
-                        data.get("image")
-                        if data.get("verification_type", "OTP") == "FACIAL"
-                        else None
-                    ),
+                    # Facial image has NOT been submitted yet.
+                    facial_image=None,
 
                     city=data.get("city"),
+
                     state=data.get("state"),
+
                     country=data.get("country"),
                 )
 
@@ -570,7 +563,7 @@ class SignupAndOpenWallet(APIView):
             )
 
         # ----------------------------------------------------
-        # CACHE CODE
+        # CACHE EMAIL CODE
         # ----------------------------------------------------
 
         cache.set(
@@ -586,6 +579,7 @@ class SignupAndOpenWallet(APIView):
         try:
 
             send_mail(
+
                 subject="Verify your Monieplug account",
 
                 message=(
@@ -608,7 +602,6 @@ class SignupAndOpenWallet(APIView):
 
         except Exception as exc:
 
-            # Remove user if email cannot be sent.
             user.delete()
 
             cache.delete(
@@ -664,15 +657,12 @@ class VerifyEmail(APIView):
             200: OpenApiResponse(
                 OpenApiTypes.OBJECT,
                 description=(
-                    "Email verified and WAAS "
-                    "identity verification initiated."
+                    "Email verified. User must now "
+                    "choose BVN or NIN."
                 ),
             ),
             400: OpenApiResponse(
                 description="Invalid verification code."
-            ),
-            502: OpenApiResponse(
-                description="WAAS unavailable."
             ),
         },
         tags=["Authentication"],
@@ -740,10 +730,13 @@ class VerifyEmail(APIView):
 
         user.email_verification_code = None
 
+        user.verification_status = "Email Verified"
+
         user.save(
             update_fields=[
                 "is_active",
                 "email_verification_code",
+                "verification_status",
             ]
         )
 
@@ -752,10 +745,297 @@ class VerifyEmail(APIView):
         )
 
         # ----------------------------------------------------
-        # NOW START WAAS IDENTITY VERIFICATION
+        # IMPORTANT:
+        #
+        # DO NOT CALL WAAS HERE.
+        #
+        # THE USER MUST FIRST CHOOSE:
+        #
+        # 1. BVN OR NIN
+        #
+        # 2. OTP OR FACIAL
         # ----------------------------------------------------
 
-        return initiate_waas_identity(user)
+        return Response(
+            {
+                "status": "SUCCESS",
+
+                "message": (
+                    "Email verified successfully. "
+                    "Please choose your identity "
+                    "verification method."
+                ),
+
+                "user_id": str(user.id),
+
+                "next_step": "choose_identity_method",
+
+                "options": {
+                    "identity": [
+                        "BVN",
+                        "NIN",
+                    ],
+                    "verification": [
+                        "OTP",
+                        "FACIAL",
+                    ],
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ============================================================
+# CHOOSE BVN/NIN AND OTP/FACIAL
+# ============================================================
+
+class InitiateIdentityVerification(APIView):
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiResponse(
+                OpenApiTypes.OBJECT,
+                description=(
+                    "WAAS identity verification "
+                    "initiated."
+                ),
+            ),
+        },
+        tags=["Authentication"],
+    )
+    def post(self, request):
+
+        # ----------------------------------------------------
+        # REQUIRED FIELDS
+        # ----------------------------------------------------
+
+        user_id = request.data.get(
+            "user_id"
+        )
+
+        identity_type = str(
+            request.data.get(
+                "identity_type",
+                ""
+            )
+        ).upper().strip()
+
+        verification_type = str(
+            request.data.get(
+                "verification_type",
+                ""
+            )
+        ).upper().strip()
+
+        identity_number = str(
+            request.data.get(
+                "identity_number",
+                ""
+            )
+        ).strip()
+
+        facial_image = request.data.get(
+            "image"
+        )
+
+        # ----------------------------------------------------
+        # VALIDATE USER ID
+        # ----------------------------------------------------
+
+        if not user_id:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": "user_id is required.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+
+            user = User.objects.get(
+                id=user_id
+            )
+
+        except (User.DoesNotExist, ValueError):
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": "User not found.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ----------------------------------------------------
+        # EMAIL MUST BE VERIFIED
+        # ----------------------------------------------------
+
+        if not user.is_active:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "Please verify your email "
+                        "before identity verification."
+                    ),
+                    "next_step": "verify_email",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # ----------------------------------------------------
+        # ALREADY VERIFIED
+        # ----------------------------------------------------
+
+        if user.is_identity_verified:
+
+            return Response(
+                {
+                    "status": "SUCCESS",
+                    "message": (
+                        "Identity has already "
+                        "been verified."
+                    ),
+                    "wallet_id": user.wallet_id,
+                    "account_number": (
+                        user.wallet_account_number
+                    ),
+                    "next_step": "completed",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # ====================================================
+        # VALIDATE IDENTITY TYPE
+        # ====================================================
+
+        if identity_type not in [
+            "BVN",
+            "NIN",
+        ]:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "identity_type must be "
+                        "either BVN or NIN."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ====================================================
+        # VALIDATE VERIFICATION TYPE
+        # ====================================================
+
+        if verification_type not in [
+            "OTP",
+            "FACIAL",
+        ]:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "verification_type must be "
+                        "either OTP or FACIAL."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ====================================================
+        # IDENTITY NUMBER REQUIRED
+        # ====================================================
+
+        if not identity_number:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        f"{identity_type} is required."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ====================================================
+        # SAVE BVN/NIN
+        # ====================================================
+
+        if identity_type == "BVN":
+
+            user.bvn = identity_number
+
+            # Clear the other identity if necessary.
+            user.nin = None
+
+        elif identity_type == "NIN":
+
+            user.nin = identity_number
+
+            # Clear the other identity if necessary.
+            user.bvn = None
+
+        # ====================================================
+        # SAVE VERIFICATION METHOD
+        # ====================================================
+
+        user.verification_mode = verification_type
+
+        # ====================================================
+        # FACIAL IMAGE
+        # ====================================================
+
+        if verification_type == "FACIAL":
+
+            if not facial_image:
+
+                return Response(
+                    {
+                        "status": "FAILED",
+                        "message": (
+                            "Facial image is required "
+                            "for facial verification."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user.facial_image = facial_image
+
+        else:
+
+            # OTP does not need a facial image.
+            user.facial_image = None
+
+        user.verification_status = "Ongoing"
+
+        user.save(
+            update_fields=[
+                "bvn",
+                "nin",
+                "verification_mode",
+                "facial_image",
+                "verification_status",
+            ]
+        )
+
+        # ----------------------------------------------------
+        # START WAAS
+        # ----------------------------------------------------
+
+        return initiate_waas_identity(
+            user
+        )
 
 
 # ============================================================
@@ -764,9 +1044,46 @@ class VerifyEmail(APIView):
 
 def initiate_waas_identity(user):
 
+    # --------------------------------------------------------
+    # CHECK REQUIRED USER DATA
+    # --------------------------------------------------------
+
+    if not user.bvn and not user.nin:
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "BVN or NIN must be selected "
+                    "before WAAS identity verification."
+                ),
+                "next_step": "choose_identity_method",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not user.verification_mode:
+
+        return Response(
+            {
+                "status": "FAILED",
+                "message": (
+                    "OTP or FACIAL must be selected "
+                    "before WAAS identity verification."
+                ),
+                "next_step": "choose_identity_method",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # --------------------------------------------------------
+    # WAAS AUTHENTICATION
+    # --------------------------------------------------------
+
     waas_token, auth_response = get_waas_token()
 
     if not waas_token:
+
         return Response(
             {
                 "status": "FAILED",
@@ -775,7 +1092,9 @@ def initiate_waas_identity(user):
                     "authentication failed."
                 ),
                 "waas_response": auth_response,
-                "next_step": "retry_identity_verification",
+                "next_step": (
+                    "retry_identity_verification"
+                ),
             },
             status=status.HTTP_502_BAD_GATEWAY,
         )
@@ -787,77 +1106,140 @@ def initiate_waas_identity(user):
     transaction_ref = uuid.uuid4().hex[:15].upper()
 
     verification_type = (
-        user.verification_mode or "OTP"
+        user.verification_mode
+        or "OTP"
     )
 
     # --------------------------------------------------------
     # WAAS IDENTITY INITIATE
     # --------------------------------------------------------
 
-    url = f"{WAAS_BASE_URL}/identity/initiate"
+    url = (
+        f"{WAAS_BASE_URL}/identity/initiate"
+    )
 
     payload = {
         "transactionRef": transaction_ref,
+
         "phoneNo": user.phone,
+
         "type": verification_type,
     }
 
-    # Add BVN if supplied
+    # --------------------------------------------------------
+    # ADD SELECTED IDENTITY ONLY
+    # --------------------------------------------------------
+
     if user.bvn:
-        payload["bvn"] = str(user.bvn).strip()
 
-    # Add NIN if supplied
-    if user.nin:
-        payload["nin"] = str(user.nin).strip()
+        payload["bvn"] = str(
+            user.bvn
+        ).strip()
 
+    elif user.nin:
+
+        payload["nin"] = str(
+            user.nin
+        ).strip()
 
     # --------------------------------------------------------
     # FACIAL VERIFICATION
-    # WAAS requires image when type = FACIAL
     # --------------------------------------------------------
 
-    if verification_type.upper() == "FACIAL":
+    if verification_type == "FACIAL":
 
         if not user.facial_image:
+
             return Response(
                 {
                     "status": "FAILED",
-                    "message": "Facial verification image is missing.",
-                    "next_step": "signup_again",
+                    "message": (
+                        "Facial verification image "
+                        "is missing."
+                    ),
+                    "next_step": (
+                        "submit_facial_image"
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         payload["image"] = user.facial_image
 
+    # --------------------------------------------------------
+    # HEADERS
+    # --------------------------------------------------------
 
     headers = {
-        "Authorization": f"Bearer {waas_token}",
+        "Authorization": (
+            f"Bearer {waas_token}"
+        ),
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
     # --------------------------------------------------------
-    # DEBUG - CHECK EXACT REQUEST SENT TO WAAS
+    # DEBUG
     # --------------------------------------------------------
 
-    print("======================================")
-    print("WAAS IDENTITY INITIATE")
-    print("URL:", url)
-    print("TRANSACTION REF:", transaction_ref)
-    print("PHONE:", user.phone)
-    print("VERIFICATION TYPE:", verification_type)
-    print("BVN PRESENT:", bool(user.bvn))
-    print("NIN PRESENT:", bool(user.nin))
-    print("FACIAL IMAGE PRESENT:", bool(user.facial_image))
+    print(
+        "======================================"
+    )
+
+    print(
+        "WAAS IDENTITY INITIATE"
+    )
+
+    print(
+        "URL:",
+        url
+    )
+
+    print(
+        "TRANSACTION REF:",
+        transaction_ref
+    )
+
+    print(
+        "PHONE:",
+        user.phone
+    )
+
+    print(
+        "IDENTITY:",
+        "BVN" if user.bvn else "NIN"
+    )
+
+    print(
+        "VERIFICATION TYPE:",
+        verification_type
+    )
+
+    print(
+        "BVN PRESENT:",
+        bool(user.bvn)
+    )
+
+    print(
+        "NIN PRESENT:",
+        bool(user.nin)
+    )
+
+    print(
+        "FACIAL IMAGE PRESENT:",
+        bool(user.facial_image)
+    )
 
     if verification_type == "FACIAL":
+
         print(
             "FACIAL IMAGE LENGTH:",
             len(user.facial_image or "")
         )
 
-    print("======================================")
+    print(
+        "======================================"
+    )
 
     # --------------------------------------------------------
     # CALL WAAS
@@ -872,12 +1254,31 @@ def initiate_waas_identity(user):
             timeout=60,
         )
 
-        print("======================================")
-        print("WAAS HTTP STATUS:", response.status_code)
-        print("WAAS RAW RESPONSE:", response.text)
-        print("======================================")
+        print(
+            "======================================"
+        )
+
+        print(
+            "WAAS HTTP STATUS:",
+            response.status_code
+        )
+
+        print(
+            "WAAS RAW RESPONSE:",
+            response.text
+        )
+
+        print("BVN PRESENT:", bool(user.bvn))
+        print("BVN VALUE:", user.bvn)
+        print("NIN VALUE:", user.nin)
+        print("ACTUAL WAAS PAYLOAD:", payload)
+
+        print(
+            "======================================"
+        )
 
         try:
+
             waas_data = response.json()
 
         except ValueError:
@@ -889,7 +1290,9 @@ def initiate_waas_identity(user):
                         "Invalid response "
                         "received from WAAS."
                     ),
-                    "waas_response": response.text,
+                    "waas_response": (
+                        response.text
+                    ),
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
@@ -913,10 +1316,16 @@ def initiate_waas_identity(user):
     # --------------------------------------------------------
 
     waas_status = str(
-        waas_data.get("status", "")
+        waas_data.get(
+            "status",
+            ""
+        )
     ).upper()
 
-    if waas_status not in ["SUCCESS", "PENDING"]:
+    if waas_status not in [
+        "SUCCESS",
+        "PENDING",
+    ]:
 
         user.verification_status = "Failed"
 
@@ -929,22 +1338,36 @@ def initiate_waas_identity(user):
         return Response(
             {
                 "status": "FAILED",
+
                 "message": waas_data.get(
                     "message",
-                    "WAAS identity verification failed.",
+                    (
+                        "WAAS identity "
+                        "verification failed."
+                    ),
                 ),
+
                 "waas_response": waas_data,
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
     # --------------------------------------------------------
-    # GET TRANSACTION REFERENCE FROM WAAS
+    # GET TRANSACTION REFERENCE
     # --------------------------------------------------------
 
     transaction_ref = (
-        waas_data.get("transactionRef")
-        or waas_data.get("data", {}).get("transactionRef")
+        waas_data.get(
+            "transactionRef"
+        )
+
+        or waas_data.get(
+            "data",
+            {}
+        ).get(
+            "transactionRef"
+        )
+
         or transaction_ref
     )
 
@@ -952,7 +1375,9 @@ def initiate_waas_identity(user):
     # SAVE TRANSACTION REFERENCE
     # --------------------------------------------------------
 
-    user.identity_transaction_ref = transaction_ref
+    user.identity_transaction_ref = (
+        transaction_ref
+    )
 
     user.verification_status = (
         "Completed"
@@ -967,36 +1392,69 @@ def initiate_waas_identity(user):
         ]
     )
 
-    print("======================================")
-    print("WAAS STATUS:", waas_status)
-    print("TRANSACTION REF:", transaction_ref)
-    print(
-        "SAVED DB REF:",
-        user.identity_transaction_ref
-    )
-    print(
-        "VERIFICATION STATUS:",
-        user.verification_status
-    )
-    print("======================================")
-
     # --------------------------------------------------------
-    # FACIAL VERIFICATION
+    # FACIAL SUCCESS
+    #
+    # If WAAS immediately completes facial
+    # verification, open wallet.
     # --------------------------------------------------------
 
     if (
-        verification_type.upper() == "FACIAL"
+        verification_type == "FACIAL"
         and waas_status == "SUCCESS"
     ):
 
         return open_waas_wallet(
             user=user,
+
             waas_token=waas_token,
+
             transaction_ref=transaction_ref,
         )
 
     # --------------------------------------------------------
-    # OTP VERIFICATION
+    # OTP
+    # --------------------------------------------------------
+
+    if verification_type == "OTP":
+
+        return Response(
+            {
+                "status": "PENDING",
+
+                "message": waas_data.get(
+                    "message",
+                    (
+                        "OTP sent successfully. "
+                        "Please enter the OTP."
+                    ),
+                ),
+
+                "user_id": str(
+                    user.id
+                ),
+
+                "transaction_ref": (
+                    transaction_ref
+                ),
+
+                "verification_type": (
+                    verification_type
+                ),
+
+                "next_step": (
+                    "verify_identity"
+                ),
+
+                "waas_response": (
+                    waas_data
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    # --------------------------------------------------------
+    # FACIAL PENDING
     # --------------------------------------------------------
 
     return Response(
@@ -1005,19 +1463,35 @@ def initiate_waas_identity(user):
 
             "message": waas_data.get(
                 "message",
-                "WAAS OTP verification initiated.",
+                (
+                    "Facial identity verification "
+                    "has been initiated."
+                ),
             ),
 
-            "transaction_ref": transaction_ref,
+            "user_id": str(
+                user.id
+            ),
 
-            "verification_type": verification_type,
+            "transaction_ref": (
+                transaction_ref
+            ),
 
-            "waas_response": waas_data,
+            "verification_type": (
+                verification_type
+            ),
 
-            "next_step": "verify_identity",
+            "next_step": (
+                "identity_verification"
+            ),
+
+            "waas_response": (
+                waas_data
+            ),
         },
         status=status.HTTP_200_OK,
     )
+
 
 # ============================================================
 # VERIFY WAAS IDENTITY OTP
@@ -1040,7 +1514,9 @@ class VerifyIdentityView(APIView):
                 description="Invalid OTP."
             ),
             404: OpenApiResponse(
-                description="Identity transaction not found."
+                description=(
+                    "Identity transaction not found."
+                ),
             ),
             502: OpenApiResponse(
                 description="WAAS unavailable."
@@ -1113,6 +1589,28 @@ class VerifyIdentityView(APIView):
             )
 
         # ----------------------------------------------------
+        # MUST BE OTP VERIFICATION
+        # ----------------------------------------------------
+
+        if (
+            str(
+                user.verification_mode
+            ).upper()
+            != "OTP"
+        ):
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "This identity verification "
+                        "was not initiated using OTP."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ----------------------------------------------------
         # ALREADY COMPLETED
         # ----------------------------------------------------
 
@@ -1127,11 +1625,15 @@ class VerifyIdentityView(APIView):
                         "verified and wallet created."
                     ),
 
-                    "wallet_id": user.wallet_id,
+                    "wallet_id": (
+                        user.wallet_id
+                    ),
 
                     "account_number": (
                         user.wallet_account_number
                     ),
+
+                    "next_step": "completed",
                 },
                 status=status.HTTP_200_OK,
             )
@@ -1140,7 +1642,9 @@ class VerifyIdentityView(APIView):
         # WAAS AUTH
         # ----------------------------------------------------
 
-        waas_token, auth_response = get_waas_token()
+        waas_token, auth_response = (
+            get_waas_token()
+        )
 
         if not waas_token:
 
@@ -1153,7 +1657,9 @@ class VerifyIdentityView(APIView):
                         "with WAAS."
                     ),
 
-                    "waas_response": auth_response,
+                    "waas_response": (
+                        auth_response
+                    ),
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
             )
@@ -1167,25 +1673,46 @@ class VerifyIdentityView(APIView):
         )
 
         payload = {
-            "transactionRef": transaction_ref,
+            "transactionRef": (
+                transaction_ref
+            ),
+
             "otp": otp,
         }
 
         # ----------------------------------------------------
-        # IDENTITY DETAILS
-        # WAAS requires BVN or NIN
+        # SEND THE SELECTED IDENTITY
         # ----------------------------------------------------
 
         if user.bvn:
-            payload["bvn"] = str(user.bvn).strip()
 
-        if user.nin:
-            payload["nin"] = str(user.nin).strip()
+            payload["bvn"] = str(
+                user.bvn
+            ).strip()
 
+        elif user.nin:
 
-            
+            payload["nin"] = str(
+                user.nin
+            ).strip()
+
+        else:
+
+            return Response(
+                {
+                    "status": "FAILED",
+                    "message": (
+                        "No BVN or NIN was found "
+                        "for this verification."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         headers = {
-            "Authorization": f"Bearer {waas_token}",
+            "Authorization": (
+                f"Bearer {waas_token}"
+            ),
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -1194,15 +1721,42 @@ class VerifyIdentityView(APIView):
         # DEBUG
         # ----------------------------------------------------
 
-        print("======================================")
-        print("WAAS IDENTITY VERIFY OTP")
-        print("URL:", verify_url)
-        print("TRANSACTION REF:", transaction_ref)
-        print("OTP:", otp)
-        print("BVN:", repr(user.bvn))
-        print("NIN:", repr(user.nin))
-        print("PAYLOAD:", payload)
-        print("======================================")
+        print(
+            "======================================"
+        )
+
+        print(
+            "WAAS IDENTITY VERIFY OTP"
+        )
+
+        print(
+            "URL:",
+            verify_url
+        )
+
+        print(
+            "TRANSACTION REF:",
+            transaction_ref
+        )
+
+        print(
+            "OTP:",
+            otp
+        )
+
+        print(
+            "IDENTITY:",
+            "BVN" if user.bvn else "NIN"
+        )
+
+        print(
+            "PAYLOAD:",
+            payload
+        )
+
+        print(
+            "======================================"
+        )
 
         # ----------------------------------------------------
         # CALL WAAS
@@ -1217,16 +1771,23 @@ class VerifyIdentityView(APIView):
                 timeout=60,
             )
 
-            print("======================================")
+            print(
+                "======================================"
+            )
+
             print(
                 "WAAS VERIFY HTTP STATUS:",
                 response.status_code
             )
+
             print(
                 "WAAS VERIFY RAW RESPONSE:",
                 response.text
             )
-            print("======================================")
+
+            print(
+                "======================================"
+            )
 
             try:
 
@@ -1237,11 +1798,15 @@ class VerifyIdentityView(APIView):
                 return Response(
                     {
                         "status": "FAILED",
+
                         "message": (
                             "Invalid response "
                             "received from WAAS."
                         ),
-                        "waas_response": response.text,
+
+                        "waas_response": (
+                            response.text
+                        ),
                     },
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
@@ -1251,10 +1816,12 @@ class VerifyIdentityView(APIView):
             return Response(
                 {
                     "status": "FAILED",
+
                     "message": (
                         "Unable to connect to "
                         "WAAS identity service."
                     ),
+
                     "details": str(exc),
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -1266,7 +1833,10 @@ class VerifyIdentityView(APIView):
 
         if (
             str(
-                waas_data.get("status", "")
+                waas_data.get(
+                    "status",
+                    ""
+                )
             ).upper()
             != "SUCCESS"
         ):
@@ -1285,10 +1855,15 @@ class VerifyIdentityView(APIView):
 
                     "message": waas_data.get(
                         "message",
-                        "Identity OTP verification failed.",
+                        (
+                            "Identity OTP "
+                            "verification failed."
+                        ),
                     ),
 
-                    "waas_response": waas_data,
+                    "waas_response": (
+                        waas_data
+                    ),
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -1301,10 +1876,11 @@ class VerifyIdentityView(APIView):
 
         return open_waas_wallet(
             user=user,
+
             waas_token=waas_token,
+
             transaction_ref=transaction_ref,
         )
-
 
 #User = get_user_model()
 
@@ -1523,7 +2099,7 @@ class TransferFundsView(APIView):
             return Response({"error": "WAAS authentication failed", "details": str(e)}, status=500)
 
         # 4️⃣ Prepare WAAS payload
-        short_ref = str(uuid.uuid4())[:25]  # max 25 chars
+        short_ref = uuid.uuid4().hex[:15].upper()  # max 25 chars
         short_name = f"{user.first_name} {user.last_name}"[:25]
         narration = data.get("narration", "Payment transfer")[:25]
 
@@ -1549,7 +2125,7 @@ class TransferFundsView(APIView):
     },
     "transactionType": "INTRA_BANK",
     "merchant": {
-  "isFee": False,
+  "isFee": True,
   "merchantFeeAccount": "1100015137",
   "merchantFeeAmount": "9.25"
 }

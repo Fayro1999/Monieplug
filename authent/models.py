@@ -231,6 +231,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         default="Pending"
     )
 
+    #onboarding_step = models.CharField(
+        #max_length=50,
+        #default="SIGNUP",
+    #)
+
     verification_mode = models.CharField(
         max_length=50,
         blank=True,
