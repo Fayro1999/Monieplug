@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'monieplug',
     'event',
     'authent',
+    'anymail',
     'rest_framework',
     "rest_framework.authtoken",
     "drf_spectacular",
@@ -120,7 +121,7 @@ DATABASES = {
 
 DATABASES = {
     'default': dj_database_url.config(
-        default='postgresql://fixx_user:fVCXqkx3QPnDU1r1kyajMuYcRChQtbXW@dpg-db52s7rrjlhs73c7qg30-a.oregon-postgres.render.com/fixx',
+        default='postgresql://fixx_db_user:QtnnMs427UVrhvdiA5hxFZ91o5OGyAGX@dpg-dbc8onrbc2fs73bm1oag-a.oregon-postgres.render.com/fixx_db',
         conn_max_age=600,
         ssl_require=True   # 👈 This line forces SSL
     )
@@ -184,6 +185,10 @@ EMAIL_TIMEOUT = 60
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False
+
+
+
+
 
 
 WAAS_USERNAME = "schoolplug"
@@ -267,4 +272,5 @@ STORAGES = {
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    "https://monieplug-new.vercel.app",
 ]

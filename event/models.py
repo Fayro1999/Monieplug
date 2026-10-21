@@ -160,6 +160,13 @@ class TicketPurchase(models.Model):
         unique=True
     )
 
+    paystack_transaction_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        unique=True
+    )
+
     paystack_account_number = models.CharField(
         max_length=50,
         blank=True,
@@ -186,6 +193,17 @@ class TicketPurchase(models.Model):
     # ---------------------------------------------------------
     # PAYSTACK ORGANIZER PAYOUT
     # ---------------------------------------------------------
+
+    # Destination selected for this specific payout.
+    payout_destination = models.CharField(
+        max_length=20,
+        choices=[
+            ("WAAS", "WAAS Wallet"),
+            ("BANK", "External Bank Account"),
+        ],
+        blank=True,
+        null=True,
+    )   
 
     # Paystack transfer reference used to pay organizer.
     paystack_transfer_reference = models.CharField(
