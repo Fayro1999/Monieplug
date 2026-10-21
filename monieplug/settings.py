@@ -180,7 +180,7 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_HOST_USER = 'fixx.eservice@gmail.com'
 EMAIL_HOST_PASSWORD = 'dhmg adio ekbd ptbg'  # App Password
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-EMAIL_TIMEOUT = 60
+EMAIL_TIMEOUT = 10
 
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True
