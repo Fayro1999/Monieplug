@@ -172,19 +172,32 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
+#EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+#EMAIL_HOST = 'smtp.gmail.com'
 #EMAIL_PORT = 587
 #EMAIL_USE_SSL = False#True
 #4EMAIL_USE_TLS = True#False
-EMAIL_HOST_USER = 'fixx.eservice@gmail.com'
-EMAIL_HOST_PASSWORD = 'dhmg adio ekbd ptbg'  # App Password
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-EMAIL_TIMEOUT = 10
+#EMAIL_HOST_USER = 'fixx.eservice@gmail.com'
+#EMAIL_HOST_PASSWORD = 'dhmg adio ekbd ptbg'  # App Password
+#DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+#EMAIL_TIMEOUT = 10
 
-EMAIL_PORT = 465
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
+#EMAIL_PORT = 465
+#EMAIL_USE_SSL = True
+#EMAIL_USE_TLS = False
+
+
+
+#import os
+
+EMAIL_BACKEND = "authent.email_service.ZeptoMailBackend"
+
+ZEPTOMAIL_API_URL = "https://cpaas.zoho.com/v1.1/email"
+
+ZEPTOMAIL_API_KEY = "wSsVR61+8xHwD6t4zzGocuxty1oADgilQx9+2leg7nStH/7Hp8dpxBGaDA72GKMWQGduQjMa8rN4nhgC0WEHjtx+yg5WDyiF9mqRe1U4J3x17qnvhDzKV2VfkhaMKoMAzgxonmFnFsol+g=="
+
+DEFAULT_FROM_EMAIL = "no-reply@fixx.com.ng"
+
 
 
 
